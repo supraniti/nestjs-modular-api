@@ -26,6 +26,14 @@ describe('MongoInfraBootstrap', () => {
   let docker: DockerServiceMocks;
   let waitSpy: jest.MockedFunction<typeof TcpWait.waitForTcpOpen>;
 
+  // Save/restore CI-related env so we can override inside tests
+  const savedEnv = {
+    CI: process.env.CI,
+    GITHUB_ACTIONS: process.env.GITHUB_ACTIONS,
+    NODE_ENV: process.env.NODE_ENV,
+    MONGO_AUTO_START: process.env.MONGO_AUTO_START,
+  };
+
   const runningState: ContainerStateInfo = {
     name: 'app-mongo',
     id: 'abc123',
@@ -38,8 +46,14 @@ describe('MongoInfraBootstrap', () => {
   };
 
   beforeEach(async () => {
+    // --- Gate overrides for tests ---
+    // Ensure bootstrap does NOT think we're in CI:
+    process.env.CI = '0';
+    process.env.GITHUB_ACTIONS = '0';
     // Explicitly opt-in to orchestration during unit tests (bootstrap skips by default in Jest)
     process.env.MONGO_AUTO_START = '1';
+    // Keep NODE_ENV as 'test' (typical in Jest)
+    process.env.NODE_ENV = 'test';
 
     // Typed spy for the TCP wait helper
     waitSpy = jest.spyOn(TcpWait, 'waitForTcpOpen') as jest.MockedFunction<
@@ -102,7 +116,21 @@ describe('MongoInfraBootstrap', () => {
   afterEach(async () => {
     await moduleRef.close();
     jest.restoreAllMocks();
-    delete process.env.MONGO_AUTO_START;
+
+    // Restore original env
+    if (savedEnv.CI === undefined) delete process.env.CI;
+    else process.env.CI = savedEnv.CI;
+
+    if (savedEnv.GITHUB_ACTIONS === undefined)
+      delete process.env.GITHUB_ACTIONS;
+    else process.env.GITHUB_ACTIONS = savedEnv.GITHUB_ACTIONS;
+
+    if (savedEnv.NODE_ENV === undefined) delete process.env.NODE_ENV;
+    else process.env.NODE_ENV = savedEnv.NODE_ENV;
+
+    if (savedEnv.MONGO_AUTO_START === undefined)
+      delete process.env.MONGO_AUTO_START;
+    else process.env.MONGO_AUTO_START = savedEnv.MONGO_AUTO_START;
   });
 
   it('skips orchestration when MONGO_AUTO_START=0', async () => {
