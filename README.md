@@ -117,3 +117,33 @@ Maintained by Yair Levy (@supraniti)
 Contributions follow the step-by-step modular protocol documented below.
 
 ---
+
+──────────────────────────────
+
+## Added Module: Health
+
+**Date:** 2025-10-06  
+**Description:** Basic liveness and environment status endpoints.
+
+**Routes**
+
+- GET /api/health/ping  
+  → Returns `{ ok: true, timestamp, epochMs, uptimeSec }`  
+  → DTO: PingResponseDto
+- GET /api/health/info  
+  → Returns `{ status: 'ok', timestamp, uptimeSec, pid, node, env, version }`  
+  → DTO: InfoResponseDto
+
+**Files**
+
+- src/modules/health/health.module.ts
+- src/modules/health/health.controller.ts
+- src/modules/health/health.service.ts
+- src/modules/health/dto/Ping.response.dto.ts
+- src/modules/health/dto/Info.response.dto.ts
+- src/modules/health/tests/health.controller.spec.ts
+- src/modules/health/tests/health.service.spec.ts
+- test/modules/health.e2e-spec.ts
+
+**Status:** ✅ All lint/build/unit/e2e tests passed locally and in CI.
+──────────────────────────────
