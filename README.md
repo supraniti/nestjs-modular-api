@@ -262,3 +262,90 @@ The Docker module’s real-e2e remains gated separately by DOCKER_E2E.
 Activation:
 
 AppModule imports MongoInfraModule, so the bootstrap runs automatically on startup.
+
+MongoDB Module (Internal)
+
+Path: src/modules/mongodb
+Purpose: Provides a thin, strictly-typed bridge between the application and the local MongoDB instance managed by the infra bootstrap. It exposes the official MongoDB Node driver with zero API re-invention.
+
+Scope
+
+Internal only — no HTTP controller.
+
+Consumed by other backend modules for direct DB operations.
+
+Provides connection lifecycle management, error wrapping, and typed helpers.
+
+Public API (via DI)
+
+getDb(dbName?: string): Promise<Db> — returns a connected native driver Db.
+
+getCollection<T = Document>(name: string, dbName?: string): Promise<Collection<T>>
+
+runCommand(command: Record<string, unknown>, dbName?: string): Promise<Record<string, unknown>>
+
+getClient(): Promise<MongoClient> — access underlying client if required.
+
+Automatically closes connection on module destroy.
+
+Internals
+
+internal/mongodb.client.ts — lazy singleton maintaining a single MongoClient instance.
+
+Connects on first use.
+
+Reuses connection across calls.
+
+Gracefully closes on shutdown.
+
+internal/mongodb.types.ts — re-exports official driver types and constants (DEFAULT_DB_NAME, isNonEmptyString).
+
+Error Model
+
+Uses MongoActionError (extends AppError) for contextual error wrapping.
+
+Each operation includes operation, dbName, collection, and trimmed argsPreview.
+
+Local Integration Tests
+
+src/modules/mongodb/tests/mongodb.service.spec.ts connects to the real local Mongo container (app-mongo).
+
+Creates a temporary database, performs CRUD, and cleans up.
+
+Automatically skipped in CI (describe.skip when CI=1).
+
+Environment Variables
+
+MONGO_AUTO_START=1 — allows infra bootstrap to start the local container when needed.
+
+CI=0 locally; tests will auto-skip when CI=1.
+
+Other Mongo connection vars are inherited from infra defaults:
+
+MONGO_IMAGE=mongo:7
+
+MONGO_CONTAINER_NAME=app-mongo
+
+MONGO_HOST=127.0.0.1
+
+MONGO_PORT=27017
+
+MONGO_ROOT_USERNAME=modapi_root
+
+MONGO_ROOT_PASSWORD=modapi_root_dev
+
+Testing Notes
+
+Run with pnpm test locally — the suite connects to the live container.
+
+Ensure Docker Desktop is running and app-mongo container is active or auto-start enabled.
+
+The test DB (modapi*test*<timestamp>) is dropped automatically after the suite.
+
+Next Steps
+
+(Optional) Add backup helpers using mongodump --gzip through the Docker module.
+
+(Optional) Expose a limited HTTP layer (/api/mongodb/\*) for controlled admin access.
+
+───────────────────────────────────────────────
