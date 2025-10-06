@@ -1,41 +1,62 @@
 # NestJS Modular API
 
-A fully typed, modular NestJS backend exposing a single `/api` endpoint.
+A fully typed, modular NestJS backend exposing a single \`/api\` prefix.
+Focus: strict typing, modular growth, clean CI, and Windows-friendly dev.
 
 ---
 
-## 📘 Project Overview
+## Table of Contents
 
-This project provides a foundation for building modular APIs using **NestJS**, where each module defines its own actions under `/api/:module/:action`.  
-Modules can expose both short and long-running actions, and can also invoke other modules internally.
-
-All code follows strict typing and NestJS conventions, with linting, formatting, and CI verification on every change.
-
----
-
-## 🏗️ Current State
-
-✅ **Environment Setup Completed**
-
-- NestJS scaffold verified with `pnpm build`, `pnpm test`, and `pnpm run test:e2e`
-- `/api` global prefix and validation pipe configured in `main.ts`
-- `/api/health` endpoint implemented (`HealthController`)
-- `@nestjs/config` integrated with `.env`, `.env.example`, `.env.test`
-- Shared utilities added in `src/lib/`:
-  - `isDefined()` helper
-  - `JsonValue` type
-  - `AppError` class
-- TS path alias `@lib/*` configured
-- ESLint + Prettier harmony established
-- GitHub Actions CI workflow:
-  - Installs pnpm
-  - Lints, builds, and runs unit + e2e tests
-  - `DOCKER_E2E=0` by default
-- All tests and CI workflows are green
+- [Project Overview](#project-overview)
+- [Current State](#current-state)
+- [Environment](#environment)
+- [Project Structure](#project-structure)
+- [Development Workflow](#development-workflow)
+- [Commands](#commands)
+- [CI Pipeline](#ci-pipeline)
+- [Modules Implemented](#modules-implemented)
+- [Health (HTTP)](#health-http)
+- [Docker (Internal Only)](#docker-internal-only)
+- [Mongo Infra (Local Bootstrap)](#mongo-infra-local-bootstrap)
+- [MongoDB Module (Internal)](#mongodb-module-internal)
+- [Fields Module (HTTP)](#fields-module-http)
+- [Notes & Next Steps](#notes--next-steps)
+- [Author](#author)
 
 ---
 
-## ⚙️ Environment Details
+## Project Overview
+
+Each module exposes one or more actions under \`/api/:module/:action\`.
+Actions may be immediate or long-running (with polling). Modules can also
+call each other internally via typed service APIs.
+
+**Design principles**
+
+- Strict typing everywhere (no \`any\` / \`unknown\` escapes).
+- Shared logic in \`src/lib/_\`, infra in \`src/infra/_\`.
+- Controllers thin; Services own business logic.
+- DTOs validate inputs (\`class-validator\`) and return **typed** responses.
+- E2E that touch Docker/Mongo are **gated** and skipped on CI by default.
+
+---
+
+## Current State
+
+- \`/api\` global prefix & validation pipe configured.
+- \`/api/health\` implemented and tested.
+- Config: \`.env\`, \`.env.example\`, \`.env.test\` via \`@nestjs/config\`.
+- Shared utilities in \`src/lib/\`:
+- \`utils/isDefined.ts\`
+- \`types/json.ts\`
+- \`errors/AppError.ts\`
+- Path alias: \`@lib/\_\`.
+- ESLint + Prettier clean.
+- GitHub Actions: lint → build → unit → e2e; heavy e2e gated (see CI).
+
+---
+
+## Environment
 
 | Tool            | Version / Notes                      |
 | --------------- | ------------------------------------ |
@@ -49,413 +70,259 @@ All code follows strict typing and NestJS conventions, with linting, formatting,
 
 ---
 
-## 📁 Project Structure
+## Project Structure
 
+\`\`\`
 src/
 ├─ app.controller.ts
 ├─ app.service.ts
 ├─ app.module.ts
-├─ health.controller.ts
+├─ main.ts
 ├─ lib/
 │ ├─ utils/isDefined.ts
 │ ├─ types/json.ts
 │ ├─ errors/AppError.ts
 │ └─ index.ts
-└─ main.ts
+├─ infra/
+│ └─ mongo/ # local bootstrap (Docker-managed Mongo)
+└─ modules/
+├─ health/ # HTTP health endpoints
+├─ docker/ # internal Docker client/service
+├─ mongodb/ # internal thin MongoDB bridge
+└─ fields/ # HTTP: field registry (Stage 1)
 test/
 ├─ app.e2e-spec.ts
-└─ helpers/docker.ts
+├─ modules/
+│ ├─ health.e2e-spec.ts
+│ ├─ docker.e2e-spec.ts
+│ └─ fields.e2e-spec.ts
+└─ helpers/
+└─ docker.ts
+\`\`\`
 
 ---
 
-## 🚀 Next Steps
+## Development Workflow
 
-- Begin adding new modules under `src/modules/`
-- Each module exposes one or more `/api/:module/:action` routes
-- Each module includes:
-  - Controller
-  - Service
-  - DTOs (if needed)
-  - Tests under `src/modules/<module>/tests/`
-- After every completed module:
-  - The README is updated with a **“Modules Implemented”** section describing new functionality.
+We grow the API one module at a time:
+
+1. **Scaffold** module (\`src/modules/<name>\`): controller, service, dto, tests.
+2. Implement **service** (strict, reusable API), then controller (thin).
+3. Add **unit tests** next to code; **e2e** under \`test/modules/\`.
+4. Run locally:
+   \`\`\`bash
+   pnpm run lint
+   pnpm run build
+   pnpm test
+   pnpm run test:e2e
+   \`\`\`
+5. Commit & push — CI must be fully green.
+6. **README update** after each module (this file).
 
 ---
 
-## 🧪 Commands
+## Commands
 
-```bash
+\`\`\`bash
 pnpm run lint
 pnpm run format:check
 pnpm run build
 pnpm test
 pnpm run test:e2e
-```
-
-✅ CI Workflow
-
-Every push triggers the GitHub Actions pipeline:
-
-Install dependencies
-
-Lint
-
-Build
-
-Run unit tests
-
-Run e2e tests
-
-CI runs with DOCKER_E2E=0 by default to skip Docker-dependent specs.
-
-🧩 Future Modules
-Module Description Status
-Example: users Manage user CRUD operations and internal identity checks ⬜ Planned
-🧑‍💻 Author
-
-Maintained by Yair Levy (@supraniti)
-Contributions follow the step-by-step modular protocol documented below.
+\`\`\`
 
 ---
 
-──────────────────────────────
+## CI Pipeline
 
-## Added Module: Health
+Every push triggers:
 
-**Date:** 2025-10-06  
-**Description:** Basic liveness and environment status endpoints.
+1. **Install deps** (pnpm)
+2. **Lint**
+3. **Build**
+4. **Unit tests**
+5. **E2E tests**
+
+Defaults:
+
+- \`DOCKER_E2E=0\` on CI to skip Docker-dependent specs.
+- Mongo Infra auto-bootstrap is skipped on CI; local dev can enable it.
+
+---
+
+## Modules Implemented
+
+### Health (HTTP)
+
+**Date:** 2025-10-06
+**Description:** Basic liveness & environment endpoints.
 
 **Routes**
 
-- GET /api/health/ping  
-  → Returns `{ ok: true, timestamp, epochMs, uptimeSec }`  
-  → DTO: PingResponseDto
-- GET /api/health/info  
-  → Returns `{ status: 'ok', timestamp, uptimeSec, pid, node, env, version }`  
-  → DTO: InfoResponseDto
+- \`GET /api/health/ping\` → \`{ ok, timestamp, epochMs, uptimeSec }\`
+- \`GET /api/health/info\` → \`{ status, timestamp, uptimeSec, pid, node, env, version }\`
 
 **Files**
 
-- src/modules/health/health.module.ts
-- src/modules/health/health.controller.ts
-- src/modules/health/health.service.ts
-- src/modules/health/dto/Ping.response.dto.ts
-- src/modules/health/dto/Info.response.dto.ts
-- src/modules/health/tests/health.controller.spec.ts
-- src/modules/health/tests/health.service.spec.ts
-- test/modules/health.e2e-spec.ts
+- \`src/modules/health/health.module.ts\`
+- \`src/modules/health/health.controller.ts\`
+- \`src/modules/health/health.service.ts\`
+- \`src/modules/health/dto/Ping.response.dto.ts\`
+- \`src/modules/health/dto/Info.response.dto.ts\`
+- \`src/modules/health/tests/health.controller.spec.ts\`
+- \`src/modules/health/tests/health.service.spec.ts\`
+- \`test/modules/health.e2e-spec.ts\`
 
-**Status:** ✅ All lint/build/unit/e2e tests passed locally and in CI.
-──────────────────────────────
+**Status:** ✅ Green in CI & local.
 
-Docker Module (internal-only)
+---
 
-Summary:
-Internal Nest module that manages Docker containers by name with no HTTP routes. Other modules inject DockerService and call it directly. All managed containers are labeled and mount a per-container persistent host folder under ApplicationData/containers/<name> (mounted inside the container at /data). Uses the Docker SDK (dockerode). Real Docker e2e tests are gated and do not run in CI.
+### Docker (Internal Only)
 
-Capabilities:
+**Summary:** Internal module to manage containers via **dockerode**. No HTTP.
+All managed containers are labeled \`com.modular-api.managed=true\` and mount
+persistent host folders under \`ApplicationData/containers/<name>\` → container \`/data\`.
 
-runContainer(options): create and start a container from an image. Pulls the image if needed but is a no-op if the image already exists locally.
+**Capabilities**
 
-getState(name): returns normalized container status including id, status, ports, labels, timestamps.
+- \`runContainer(options)\`
+- \`getState(name)\`
+- \`stop(name)\`, \`restart(name)\`, \`remove(name)\`
 
-stop(name), restart(name), remove(name): lifecycle operations by container name only.
+**Persistence**
 
-Applies label com.modular-api.managed=true to every container for safe filtering.
+- Host: \`<repo-root>/ApplicationData/containers/<name>\`
+- Container: \`/data\`
 
-Persistent data paths:
-Host path: <repo-root>/ApplicationData/containers/<name>
-Container path: /data
+**Testing**
 
-HTTP Exposure:
-None. This module is internal only and exposes no /api routes.
+- Real Docker e2e gated by \`DOCKER_E2E=1\` (default off, CI off).
+- Unit tests under \`src/modules/docker/tests/\_\`.
 
-Environment and Testing:
+**Deps**
 
-DOCKER_E2E=1 enables real Docker e2e locally. Default is off. CI runs with this off.
+- \`dockerode\` (+ \`@types/dockerode\`)
 
-When DOCKER_E2E is not 1, the docker e2e suite is marked as skipped.
+---
 
-Docker host detection:
-Windows uses npipe:////./pipe/docker_engine
-Linux and macOS use /var/run/docker.sock
+### Mongo Infra (Local Bootstrap)
 
-Dependencies:
+**Summary:** On app start (local), ensure a **MongoDB** container exists/runs:
 
-Runtime dependency: dockerode
+- Name: \`app-mongo\`, Image: \`mongo:7\`
+- Publishes \`127.0.0.1:27017\` (container 27017)
+- Restart: \`unless-stopped\`
+- Persistent data: \`<repo-root>/ApplicationData/containers/app-mongo\` → \`/data\` (Mongo uses \`/data/db\`)
 
-Type definitions: @types/dockerode
+**Env (dev defaults)**
 
-Key Files:
+- \`MONGO_AUTO_START=1\` (CI sets 0 implicitly)
+- \`MONGO_IMAGE=mongo:7\`
+- \`MONGO_CONTAINER_NAME=app-mongo\`
+- \`MONGO_HOST=127.0.0.1\`
+- \`MONGO_PORT=27017\`
+- \`MONGO_ROOT_USERNAME=modapi_root\`
+- \`MONGO_ROOT_PASSWORD=modapi_root_dev\`
 
-src/modules/docker/docker.module.ts: module wiring and export of DockerService
+**Testing:** Unit-only (no Docker on CI). Docker e2e is separate/gated.
 
-src/modules/docker/docker.service.ts: high-level service API for other modules
+---
 
-src/modules/docker/internal/docker.client.ts: typed Docker wrapper with timeouts, labeling, and persistent volume enforcement
+### MongoDB Module (Internal)
 
-src/modules/docker/internal/docker.types.ts: strict types and defaults
+**Path:** \`src/modules/mongodb\`
+**Purpose:** Thin, strictly-typed bridge to the official MongoDB Node driver. No API re-invention.
 
-src/modules/docker/internal/path.util.ts: ApplicationData path helpers and env/port utilities
+**Public API (via DI)**
 
-src/modules/docker/internal/docker.error.ts: DockerError and error wrapper
+- \`getDb(dbName?: string): Promise<Db>\`
+- \`getCollection<T = Document>(name: string, dbName?: string): Promise<Collection<T>>\`
+- \`runCommand(command: Record<string, unknown>, dbName?: string): Promise<Record<string, unknown>>\`
+- \`getClient(): Promise<MongoClient>\` (lifecycle managed)
 
-Tests:
-Unit: src/modules/docker/tests/docker.service.spec.ts
-E2E (gated): test/modules/docker.e2e-spec.ts (uses mongo:latest and the persistent volume)
+**Internals**
 
-Usage (internal example):
-Inject DockerService in another module or service and call:
-await dockerService.runContainer({
-name: 'modapi-mongo-e2e',
-image: 'mongo:latest',
-env: { MONGO_INITDB_ROOT_USERNAME: 'root', MONGO_INITDB_ROOT_PASSWORD: 'pass' },
-ports: [{ host: 27017, container: 27017 }]
-});
+- Lazy singleton client; connects on first use; closes on module destroy.
+- Error wrapping via \`MongoActionError\` (extends \`AppError\`).
 
-Conventions:
-When adding any third-party SDK, also add its @types package (if separate) to keep typing strict and ESLint clean.
+**Local Integration Tests**
 
-—
+- \`src/modules/mongodb/tests/mongodb.service.spec.ts\`
+- Connects to live \`app-mongo\`, performs CRUD, cleans up.
+- Auto-skipped on CI.
 
-Mongo Infra (local bootstrap)
+---
 
-Summary:
-On application startup, the app ensures a local MongoDB container is present and reachable. It creates or starts a Docker container named “app-mongo” from image “mongo:7”, publishes localhost:27017, labels it for safety, and stores persistent data under ApplicationData/containers/app-mongo (mounted in the container at /data; Mongo writes to /data/db). This is infra-only (no HTTP routes). It is intended for always-local development; CI does not run Docker for this feature.
+### Fields Module (HTTP)
 
-Defaults and behavior:
+**Path:** \`src/modules/fields\`
+**Purpose:** Manage canonical **field types** (Stage 1 of DB-driven schema). Other datatypes will compose these fields.
 
-Container name: app-mongo
+**Behavior**
 
-Image: mongo:7
+- HTTP under \`/api/fields/\*\`
+- Seeds baseline, **locked** field types on local start:
+- \`string\`, \`number\`, \`boolean\`, \`date\`, \`enum\`
+- Locked fields: **cannot delete**, only \`label\` is mutable
+- Custom fields: create / update / delete
+- Unique index on \`keyLower\` (case-insensitive uniqueness)
 
-Host/port: 127.0.0.1:27017 (container 27017)
+**Bootstrap**
 
-Restart policy: unless-stopped
+- \`FieldsBootstrap\` ensures index + seeds
+- Gated: runs locally; **skips on CI**
+- \`FIELDS_BOOTSTRAP=0\` → disable locally
 
-Root credentials (dev defaults): modapi_root / modapi_root_dev (override via env)
+**Endpoints**
 
-Persistence: host path <repo-root>/ApplicationData/containers/app-mongo → container /data (Mongo uses /data/db)
+- \`GET /api/fields/list\`
+- \`GET /api/fields/get?key=<kebab-case>\`
+- \`POST /api/fields/create\`
+- \`POST /api/fields/update\`
+- \`POST /api/fields/delete\`
 
-Environment variables:
+**Kinds (Stage 1)**
 
-MONGO_AUTO_START (default: 1) — when 1, orchestrates the container on app start; when 0, skips orchestration.
+- \`string\`: \`{ minLength?, maxLength?, pattern? }\`
+- \`number\`: \`{ min?, max?, integer? }\`
+- \`boolean\`: none
+- \`date\`: none
+- \`enum\`: \`{ values?, caseInsensitive? }\` (seed allows no values)
 
-MONGO_IMAGE (default: mongo:7)
+**Errors**
 
-MONGO_CONTAINER_NAME (default: app-mongo)
+- Service throws \`MongoActionError\` (extends \`AppError\`)
+- Controller maps any \`AppError\` → **HTTP 400**
 
-MONGO_HOST (default: 127.0.0.1)
+**Testing**
 
-MONGO_PORT (default: 27017)
+- Unit (CI-safe):
+- \`src/modules/fields/tests/fields.service.spec.ts\` (typed in-memory collection)
+- \`src/modules/fields/tests/fields.controller.spec.ts\`
+- E2E (local, real Mongo):
+- \`test/modules/fields.e2e-spec.ts\` (create → get → update → locked delete reject → delete custom)
 
-MONGO_ROOT_USERNAME (default: modapi_root)
-
-MONGO_ROOT_PASSWORD (default: modapi_root_dev)
-
-Testing:
-
-Unit tests only for this infra; no CI Docker usage. E2E is unaffected.
-
-The Docker module’s real-e2e remains gated separately by DOCKER_E2E.
-
-Activation:
-
-AppModule imports MongoInfraModule, so the bootstrap runs automatically on startup.
-
-MongoDB Module (Internal)
-
-Path: src/modules/mongodb
-Purpose: Provides a thin, strictly-typed bridge between the application and the local MongoDB instance managed by the infra bootstrap. It exposes the official MongoDB Node driver with zero API re-invention.
-
-Scope
-
-Internal only — no HTTP controller.
-
-Consumed by other backend modules for direct DB operations.
-
-Provides connection lifecycle management, error wrapping, and typed helpers.
-
-Public API (via DI)
-
-getDb(dbName?: string): Promise<Db> — returns a connected native driver Db.
-
-getCollection<T = Document>(name: string, dbName?: string): Promise<Collection<T>>
-
-runCommand(command: Record<string, unknown>, dbName?: string): Promise<Record<string, unknown>>
-
-getClient(): Promise<MongoClient> — access underlying client if required.
-
-Automatically closes connection on module destroy.
-
-Internals
-
-internal/mongodb.client.ts — lazy singleton maintaining a single MongoClient instance.
-
-Connects on first use.
-
-Reuses connection across calls.
-
-Gracefully closes on shutdown.
-
-internal/mongodb.types.ts — re-exports official driver types and constants (DEFAULT_DB_NAME, isNonEmptyString).
-
-Error Model
-
-Uses MongoActionError (extends AppError) for contextual error wrapping.
-
-Each operation includes operation, dbName, collection, and trimmed argsPreview.
-
-Local Integration Tests
-
-src/modules/mongodb/tests/mongodb.service.spec.ts connects to the real local Mongo container (app-mongo).
-
-Creates a temporary database, performs CRUD, and cleans up.
-
-Automatically skipped in CI (describe.skip when CI=1).
-
-Environment Variables
-
-MONGO_AUTO_START=1 — allows infra bootstrap to start the local container when needed.
-
-CI=0 locally; tests will auto-skip when CI=1.
-
-Other Mongo connection vars are inherited from infra defaults:
-
-MONGO_IMAGE=mongo:7
-
-MONGO_CONTAINER_NAME=app-mongo
-
-MONGO_HOST=127.0.0.1
-
-MONGO_PORT=27017
-
-MONGO_ROOT_USERNAME=modapi_root
-
-MONGO_ROOT_PASSWORD=modapi_root_dev
-
-Testing Notes
-
-Run with pnpm test locally — the suite connects to the live container.
-
-Ensure Docker Desktop is running and app-mongo container is active or auto-start enabled.
-
-The test DB (modapi*test*<timestamp>) is dropped automatically after the suite.
-
-Next Steps
-
-(Optional) Add backup helpers using mongodump --gzip through the Docker module.
-
-(Optional) Expose a limited HTTP layer (/api/mongodb/\*) for controlled admin access.
-
-───────────────────────────────────────────────
-Fields Module (HTTP)
-
-Path: src/modules/fields
-Purpose: Manage the canonical registry of field types that other data types will compose. This is the first step toward a fully DB-driven, generic schema layer.
-
-Scope & Behavior
-
-HTTP exposed under /api/fields/\*.
-
-Uses the native MongoDB driver via our internal MongodbModule.
-
-Seeds a baseline set of locked field types on app start (local): string, number, boolean, date, enum.
-
-Locked fields (seeds) cannot be deleted; only label is mutable.
-
-Custom fields can be created/updated/deleted; key is unique (case-insensitive).
-
-Collection & Indexes
-
-Collection: fields
-
-Unique index: keyLower (normalized, case-insensitive lookups)
-
-Bootstrap (seeding)
-
-Class: FieldsBootstrap
-
-Creates the unique index and ensures seed fields exist.
-
-Gating: runs locally, skips on CI. Control with:
-
-FIELDS_BOOTSTRAP=0 → disable seeding
-
-CI=true|1 → automatically skipped
-
-Endpoints
-
-GET /api/fields/list → List all fields
-
-GET /api/fields/get?key=<kebab-case> → Get one field by key
-
-POST /api/fields/create
-Body: { key: string(kebab-case), label: string, kind: { type: 'string'|'number'|'boolean'|'date'|'enum', constraints?: {...} } }
-
-POST /api/fields/update
-Body: { key: string(kebab-case), label?: string, kind?: {...} }
-Notes: For locked fields, only label may be changed.
-
-POST /api/fields/delete
-Body: { key: string(kebab-case) }
-Notes: Fails for locked fields with 400 Bad Request.
-
-Minimal kind constraints (Stage 1):
-
-string: { minLength?, maxLength?, pattern? }
-
-number: { min?, max?, integer? }
-
-boolean: none
-
-date: none
-
-enum: { values?, caseInsensitive? } (values may be omitted for the seed; concrete enums can be introduced as custom fields)
-
-Error Model
-
-Service throws MongoActionError (extends AppError).
-
-Controller maps any AppError to HTTP 400 for predictable client behavior.
-
-Testing
-
-Unit tests (CI-safe):
-
-src/modules/fields/tests/fields.service.spec.ts (typed in-memory collection)
-
-src/modules/fields/tests/fields.controller.spec.ts
-
-E2E (local, real Mongo):
-
-test/modules/fields.e2e-spec.ts
-
-Runs only when not on CI; exercises full flow: seed presence → create → read → update → locked delete rejection → delete custom.
-
-Ensure Docker Desktop is running and MONGO_AUTO_START=1 (default locally).
-
-Local Usage Examples (quick)
-
-Create:
-
+**Quick Usage**
+\`\`\`http
 POST /api/fields/create
 {
-"key": "summary",
-"label": "Summary",
-"kind": { "type": "string", "constraints": { "minLength": 1, "maxLength": 4000 } }
+\"key\": \"summary\",
+\"label\": \"Summary\",
+\"kind\": { \"type\": \"string\", \"constraints\": { \"minLength\": 1, \"maxLength\": 4000 } }"
 }
+\`\`\`
 
-Update label:
+---
 
-POST /api/fields/update
-{ "key": "summary", "label": "Summary (Short)" }
+## Notes & Next Steps
 
-Get:
+- Proceed to **Datatypes**: compose fields into typed definitions (stored in DB).
+- Enforce richer validation and relationships at the generic layer.
+- (Optional) Add backups via \`mongodump --gzip\` through the Docker module.
 
-GET /api/fields/get?key=summary
+---
 
-Delete (custom only):
+## Author
 
-POST /api/fields/delete
-{ "key": "summary" }
+Maintained by **Yair Levy (@supraniti)**
+Contributions follow the step-by-step modular protocol described above.
