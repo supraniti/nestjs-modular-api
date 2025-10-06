@@ -147,3 +147,73 @@ Contributions follow the step-by-step modular protocol documented below.
 
 **Status:** ✅ All lint/build/unit/e2e tests passed locally and in CI.
 ──────────────────────────────
+
+Docker Module (internal-only)
+
+Summary:
+Internal Nest module that manages Docker containers by name with no HTTP routes. Other modules inject DockerService and call it directly. All managed containers are labeled and mount a per-container persistent host folder under ApplicationData/containers/<name> (mounted inside the container at /data). Uses the Docker SDK (dockerode). Real Docker e2e tests are gated and do not run in CI.
+
+Capabilities:
+
+runContainer(options): create and start a container from an image. Pulls the image if needed but is a no-op if the image already exists locally.
+
+getState(name): returns normalized container status including id, status, ports, labels, timestamps.
+
+stop(name), restart(name), remove(name): lifecycle operations by container name only.
+
+Applies label com.modular-api.managed=true to every container for safe filtering.
+
+Persistent data paths:
+Host path: <repo-root>/ApplicationData/containers/<name>
+Container path: /data
+
+HTTP Exposure:
+None. This module is internal only and exposes no /api routes.
+
+Environment and Testing:
+
+DOCKER_E2E=1 enables real Docker e2e locally. Default is off. CI runs with this off.
+
+When DOCKER_E2E is not 1, the docker e2e suite is marked as skipped.
+
+Docker host detection:
+Windows uses npipe:////./pipe/docker_engine
+Linux and macOS use /var/run/docker.sock
+
+Dependencies:
+
+Runtime dependency: dockerode
+
+Type definitions: @types/dockerode
+
+Key Files:
+
+src/modules/docker/docker.module.ts: module wiring and export of DockerService
+
+src/modules/docker/docker.service.ts: high-level service API for other modules
+
+src/modules/docker/internal/docker.client.ts: typed Docker wrapper with timeouts, labeling, and persistent volume enforcement
+
+src/modules/docker/internal/docker.types.ts: strict types and defaults
+
+src/modules/docker/internal/path.util.ts: ApplicationData path helpers and env/port utilities
+
+src/modules/docker/internal/docker.error.ts: DockerError and error wrapper
+
+Tests:
+Unit: src/modules/docker/tests/docker.service.spec.ts
+E2E (gated): test/modules/docker.e2e-spec.ts (uses mongo:latest and the persistent volume)
+
+Usage (internal example):
+Inject DockerService in another module or service and call:
+await dockerService.runContainer({
+name: 'modapi-mongo-e2e',
+image: 'mongo:latest',
+env: { MONGO_INITDB_ROOT_USERNAME: 'root', MONGO_INITDB_ROOT_PASSWORD: 'pass' },
+ports: [{ host: 27017, container: 27017 }]
+});
+
+Conventions:
+When adding any third-party SDK, also add its @types package (if separate) to keep typing strict and ESLint clean.
+
+—
