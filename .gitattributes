@@ -1,0 +1,5 @@
+* text=auto eol=lf
+
+# Keep CRLF for PowerShell scripts on Windows
+*.ps1 eol=crlf
+*.psm1 eol=crlf
