@@ -349,3 +349,113 @@ Next Steps
 (Optional) Expose a limited HTTP layer (/api/mongodb/\*) for controlled admin access.
 
 ───────────────────────────────────────────────
+Fields Module (HTTP)
+
+Path: src/modules/fields
+Purpose: Manage the canonical registry of field types that other data types will compose. This is the first step toward a fully DB-driven, generic schema layer.
+
+Scope & Behavior
+
+HTTP exposed under /api/fields/\*.
+
+Uses the native MongoDB driver via our internal MongodbModule.
+
+Seeds a baseline set of locked field types on app start (local): string, number, boolean, date, enum.
+
+Locked fields (seeds) cannot be deleted; only label is mutable.
+
+Custom fields can be created/updated/deleted; key is unique (case-insensitive).
+
+Collection & Indexes
+
+Collection: fields
+
+Unique index: keyLower (normalized, case-insensitive lookups)
+
+Bootstrap (seeding)
+
+Class: FieldsBootstrap
+
+Creates the unique index and ensures seed fields exist.
+
+Gating: runs locally, skips on CI. Control with:
+
+FIELDS_BOOTSTRAP=0 → disable seeding
+
+CI=true|1 → automatically skipped
+
+Endpoints
+
+GET /api/fields/list → List all fields
+
+GET /api/fields/get?key=<kebab-case> → Get one field by key
+
+POST /api/fields/create
+Body: { key: string(kebab-case), label: string, kind: { type: 'string'|'number'|'boolean'|'date'|'enum', constraints?: {...} } }
+
+POST /api/fields/update
+Body: { key: string(kebab-case), label?: string, kind?: {...} }
+Notes: For locked fields, only label may be changed.
+
+POST /api/fields/delete
+Body: { key: string(kebab-case) }
+Notes: Fails for locked fields with 400 Bad Request.
+
+Minimal kind constraints (Stage 1):
+
+string: { minLength?, maxLength?, pattern? }
+
+number: { min?, max?, integer? }
+
+boolean: none
+
+date: none
+
+enum: { values?, caseInsensitive? } (values may be omitted for the seed; concrete enums can be introduced as custom fields)
+
+Error Model
+
+Service throws MongoActionError (extends AppError).
+
+Controller maps any AppError to HTTP 400 for predictable client behavior.
+
+Testing
+
+Unit tests (CI-safe):
+
+src/modules/fields/tests/fields.service.spec.ts (typed in-memory collection)
+
+src/modules/fields/tests/fields.controller.spec.ts
+
+E2E (local, real Mongo):
+
+test/modules/fields.e2e-spec.ts
+
+Runs only when not on CI; exercises full flow: seed presence → create → read → update → locked delete rejection → delete custom.
+
+Ensure Docker Desktop is running and MONGO_AUTO_START=1 (default locally).
+
+Local Usage Examples (quick)
+
+Create:
+
+POST /api/fields/create
+{
+"key": "summary",
+"label": "Summary",
+"kind": { "type": "string", "constraints": { "minLength": 1, "maxLength": 4000 } }
+}
+
+Update label:
+
+POST /api/fields/update
+{ "key": "summary", "label": "Summary (Short)" }
+
+Get:
+
+GET /api/fields/get?key=summary
+
+Delete (custom only):
+
+POST /api/fields/delete
+{ "key": "summary" }
