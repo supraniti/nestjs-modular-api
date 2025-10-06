@@ -1,98 +1,159 @@
-<p align="center">
-  <a href="http://nestjs.com/" target="blank"><img src="https://nestjs.com/img/logo-small.svg" width="120" alt="Nest Logo" /></a>
-</p>
+# NestJS Modular API
 
-[circleci-image]: https://img.shields.io/circleci/build/github/nestjs/nest/master?token=abc123def456
-[circleci-url]: https://circleci.com/gh/nestjs/nest
+A fully typed, modular NestJS backend exposing a single `/api` endpoint.
 
-  <p align="center">A progressive <a href="http://nodejs.org" target="_blank">Node.js</a> framework for building efficient and scalable server-side applications.</p>
-    <p align="center">
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/v/@nestjs/core.svg" alt="NPM Version" /></a>
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/l/@nestjs/core.svg" alt="Package License" /></a>
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/dm/@nestjs/common.svg" alt="NPM Downloads" /></a>
-<a href="https://circleci.com/gh/nestjs/nest" target="_blank"><img src="https://img.shields.io/circleci/build/github/nestjs/nest/master" alt="CircleCI" /></a>
-<a href="https://discord.gg/G7Qnnhy" target="_blank"><img src="https://img.shields.io/badge/discord-online-brightgreen.svg" alt="Discord"/></a>
-<a href="https://opencollective.com/nest#backer" target="_blank"><img src="https://opencollective.com/nest/backers/badge.svg" alt="Backers on Open Collective" /></a>
-<a href="https://opencollective.com/nest#sponsor" target="_blank"><img src="https://opencollective.com/nest/sponsors/badge.svg" alt="Sponsors on Open Collective" /></a>
-  <a href="https://paypal.me/kamilmysliwiec" target="_blank"><img src="https://img.shields.io/badge/Donate-PayPal-ff3f59.svg" alt="Donate us"/></a>
-    <a href="https://opencollective.com/nest#sponsor"  target="_blank"><img src="https://img.shields.io/badge/Support%20us-Open%20Collective-41B883.svg" alt="Support us"></a>
-  <a href="https://twitter.com/nestframework" target="_blank"><img src="https://img.shields.io/twitter/follow/nestframework.svg?style=social&label=Follow" alt="Follow us on Twitter"></a>
-</p>
-  <!--[![Backers on Open Collective](https://opencollective.com/nest/backers/badge.svg)](https://opencollective.com/nest#backer)
-  [![Sponsors on Open Collective](https://opencollective.com/nest/sponsors/badge.svg)](https://opencollective.com/nest#sponsor)-->
+---
 
-## Description
+## 📘 Project Overview
 
-[Nest](https://github.com/nestjs/nest) framework TypeScript starter repository.
+This project provides a foundation for building modular APIs using **NestJS**, where each module defines its own actions under `/api/:module/:action`.  
+Modules can expose both short and long-running actions, and can also invoke other modules internally.
 
-## Project setup
+All code follows strict typing and NestJS conventions, with linting, formatting, and CI verification on every change.
+
+---
+
+## 🏗️ Current State
+
+✅ **Environment Setup Completed**
+
+- NestJS scaffold verified with `pnpm build`, `pnpm test`, and `pnpm run test:e2e`
+- `/api` global prefix and validation pipe configured in `main.ts`
+- `/api/health` endpoint implemented (`HealthController`)
+- `@nestjs/config` integrated with `.env`, `.env.example`, `.env.test`
+- Shared utilities added in `src/lib/`:
+  - `isDefined()` helper
+  - `JsonValue` type
+  - `AppError` class
+- TS path alias `@lib/*` configured
+- ESLint + Prettier harmony established
+- GitHub Actions CI workflow:
+  - Installs pnpm
+  - Lints, builds, and runs unit + e2e tests
+  - `DOCKER_E2E=0` by default
+- All tests and CI workflows are green
+
+---
+
+## ⚙️ Environment Details
+
+| Tool            | Version / Notes                      |
+| --------------- | ------------------------------------ |
+| Node.js         | 20.x                                 |
+| Package Manager | pnpm                                 |
+| Framework       | NestJS 10.x                          |
+| Testing         | Jest (unit + e2e)                    |
+| CI              | GitHub Actions                       |
+| Linting         | ESLint + Prettier                    |
+| OS              | Windows / PowerShell (LF normalized) |
+
+---
+
+## 📁 Project Structure
+
+src/
+├─ app.controller.ts
+├─ app.service.ts
+├─ app.module.ts
+├─ health.controller.ts
+├─ lib/
+│ ├─ utils/isDefined.ts
+│ ├─ types/json.ts
+│ ├─ errors/AppError.ts
+│ └─ index.ts
+└─ main.ts
+test/
+├─ app.e2e-spec.ts
+└─ helpers/docker.ts
+
+---
+
+## 🚀 Next Steps
+
+- Begin adding new modules under `src/modules/`
+- Each module exposes one or more `/api/:module/:action` routes
+- Each module includes:
+  - Controller
+  - Service
+  - DTOs (if needed)
+  - Tests under `src/modules/<module>/tests/`
+- After every completed module:
+  - The README is updated with a **“Modules Implemented”** section describing new functionality.
+
+---
+
+## 🧪 Commands
 
 ```bash
-$ pnpm install
+pnpm run lint
+pnpm run format:check
+pnpm run build
+pnpm test
+pnpm run test:e2e
 ```
 
-## Compile and run the project
+✅ CI Workflow
 
-```bash
-# development
-$ pnpm run start
+Every push triggers the GitHub Actions pipeline:
 
-# watch mode
-$ pnpm run start:dev
+Install dependencies
 
-# production mode
-$ pnpm run start:prod
-```
+Lint
 
-## Run tests
+Build
 
-```bash
-# unit tests
-$ pnpm run test
+Run unit tests
 
-# e2e tests
-$ pnpm run test:e2e
+Run e2e tests
 
-# test coverage
-$ pnpm run test:cov
-```
+CI runs with DOCKER_E2E=0 by default to skip Docker-dependent specs.
 
-## Deployment
+🧩 Future Modules
+Module Description Status
+Example: users Manage user CRUD operations and internal identity checks ⬜ Planned
+🧑‍💻 Author
 
-When you're ready to deploy your NestJS application to production, there are some key steps you can take to ensure it runs as efficiently as possible. Check out the [deployment documentation](https://docs.nestjs.com/deployment) for more information.
+Maintained by Yair Levy (@supraniti)
+Contributions follow the step-by-step modular protocol documented below.
 
-If you are looking for a cloud-based platform to deploy your NestJS application, check out [Mau](https://mau.nestjs.com), our official platform for deploying NestJS applications on AWS. Mau makes deployment straightforward and fast, requiring just a few simple steps:
+---
 
-```bash
-$ pnpm install -g @nestjs/mau
-$ mau deploy
-```
+## 🧭 Step 2 — Update the Development Protocol
 
-With Mau, you can deploy your application in just a few clicks, allowing you to focus on building features rather than managing infrastructure.
+Below is your **final updated prompt** — now including the README maintenance rule.
 
-## Resources
+---
 
-Check out a few resources that may come in handy when working with NestJS:
+## ⚙️ **Prompt: NestJS Modular API — Development Protocol (Final + README Integration)**
 
-- Visit the [NestJS Documentation](https://docs.nestjs.com) to learn more about the framework.
-- For questions and support, please visit our [Discord channel](https://discord.gg/G7Qnnhy).
-- To dive deeper and get more hands-on experience, check out our official video [courses](https://courses.nestjs.com/).
-- Deploy your application to AWS with the help of [NestJS Mau](https://mau.nestjs.com) in just a few clicks.
-- Visualize your application graph and interact with the NestJS application in real-time using [NestJS Devtools](https://devtools.nestjs.com).
-- Need help with your project (part-time to full-time)? Check out our official [enterprise support](https://enterprise.nestjs.com).
-- To stay in the loop and get updates, follow us on [X](https://x.com/nestframework) and [LinkedIn](https://linkedin.com/company/nestjs).
-- Looking for a job, or have a job to offer? Check out our official [Jobs board](https://jobs.nestjs.com).
+_(Everything remains the same as the last version — with a new section for README maintenance)_
 
-## Support
+---
 
-Nest is an MIT-licensed open source project. It can grow thanks to the sponsors and support by the amazing backers. If you'd like to join them, please [read more here](https://docs.nestjs.com/support).
+### 📘 **README Maintenance**
 
-## Stay in touch
+After each module is completed and verified (locally and in CI):
 
-- Author - [Kamil Myśliwiec](https://twitter.com/kammysliwiec)
-- Website - [https://nestjs.com](https://nestjs.com/)
-- Twitter - [@nestframework](https://twitter.com/nestframework)
+1. The assistant must provide:
+   - A **full updated README.md** reflecting the new project state.
+   - The update must include:
+     - A summary of the new module.
+     - Newly added routes.
+     - Any important changes to dependencies, environment, or configuration.
+   - The update is provided as a **complete file**, not a patch.
 
-## License
+2. The assistant will ask explicitly before modifying the README, e.g.:
 
-Nest is [MIT licensed](https://github.com/nestjs/nest/blob/master/LICENSE).
+   > “Would you like me to now update the README to include the new `<module>` module description?”
+
+3. I confirm before the assistant generates the new README content.
+
+4. The README is then updated manually and committed as part of the “module completion” step.
+
+---
+
+This ensures your documentation evolves alongside your codebase, always describing the real current state of the project.
+
+---
+
+Would you like me to now regenerate the **entire protocol text (with README section already merged)** in one final clean copy — so you can copy-paste it as your new master prompt?
