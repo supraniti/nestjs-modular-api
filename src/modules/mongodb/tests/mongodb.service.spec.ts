@@ -4,8 +4,9 @@ import { MongodbService } from '../mongodb.service';
 import type { Collection, Document, Db } from 'mongodb';
 import { closeMongoClient } from '../internal/mongodb.client';
 
-// Auto-skip on CI; run locally only.
-const RUN_LOCAL = process.env.CI !== '1';
+// Detect CI reliably: CI=true or CI=1 (case-insensitive)
+const IS_CI = /^(1|true)$/i.test(process.env.CI ?? '');
+const RUN_LOCAL = !IS_CI;
 
 // Give Mongo a bit more time on first connect/start.
 jest.setTimeout(60_000);
@@ -21,9 +22,10 @@ jest.setTimeout(60_000);
     const testCollName = 'spec_collection';
 
     beforeAll(async () => {
-      // Ensure infra bootstrap is allowed to start Mongo locally (if not already running).
-      process.env.MONGO_AUTO_START = process.env.MONGO_AUTO_START ?? '1';
-      process.env.CI = '0'; // guard against CI-like env locally
+      // Allow infra bootstrap to start Mongo locally if configured (do not force on CI).
+      if (!process.env.MONGO_AUTO_START) {
+        process.env.MONGO_AUTO_START = '1';
+      }
 
       moduleRef = await Test.createTestingModule({
         imports: [MongodbModule],
