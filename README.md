@@ -217,3 +217,48 @@ Conventions:
 When adding any third-party SDK, also add its @types package (if separate) to keep typing strict and ESLint clean.
 
 —
+
+Mongo Infra (local bootstrap)
+
+Summary:
+On application startup, the app ensures a local MongoDB container is present and reachable. It creates or starts a Docker container named “app-mongo” from image “mongo:7”, publishes localhost:27017, labels it for safety, and stores persistent data under ApplicationData/containers/app-mongo (mounted in the container at /data; Mongo writes to /data/db). This is infra-only (no HTTP routes). It is intended for always-local development; CI does not run Docker for this feature.
+
+Defaults and behavior:
+
+Container name: app-mongo
+
+Image: mongo:7
+
+Host/port: 127.0.0.1:27017 (container 27017)
+
+Restart policy: unless-stopped
+
+Root credentials (dev defaults): modapi_root / modapi_root_dev (override via env)
+
+Persistence: host path <repo-root>/ApplicationData/containers/app-mongo → container /data (Mongo uses /data/db)
+
+Environment variables:
+
+MONGO_AUTO_START (default: 1) — when 1, orchestrates the container on app start; when 0, skips orchestration.
+
+MONGO_IMAGE (default: mongo:7)
+
+MONGO_CONTAINER_NAME (default: app-mongo)
+
+MONGO_HOST (default: 127.0.0.1)
+
+MONGO_PORT (default: 27017)
+
+MONGO_ROOT_USERNAME (default: modapi_root)
+
+MONGO_ROOT_PASSWORD (default: modapi_root_dev)
+
+Testing:
+
+Unit tests only for this infra; no CI Docker usage. E2E is unaffected.
+
+The Docker module’s real-e2e remains gated separately by DOCKER_E2E.
+
+Activation:
+
+AppModule imports MongoInfraModule, so the bootstrap runs automatically on startup.
