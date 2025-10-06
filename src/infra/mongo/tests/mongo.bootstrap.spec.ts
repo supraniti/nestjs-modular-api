@@ -38,6 +38,9 @@ describe('MongoInfraBootstrap', () => {
   };
 
   beforeEach(async () => {
+    // Explicitly opt-in to orchestration during unit tests (bootstrap skips by default in Jest)
+    process.env.MONGO_AUTO_START = '1';
+
     // Typed spy for the TCP wait helper
     waitSpy = jest.spyOn(TcpWait, 'waitForTcpOpen') as jest.MockedFunction<
       typeof TcpWait.waitForTcpOpen

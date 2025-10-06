@@ -12,9 +12,44 @@ import {
 } from './mongo.config';
 import { waitForTcpOpen } from '../../lib/net/tcp-wait';
 
+/** Treat common “true” strings as true. */
+function isTruthyEnv(value: string | undefined): boolean {
+  if (value === undefined) return false;
+  const v = value.trim().toLowerCase();
+  return v === '1' || v === 'true' || v === 'yes' || v === 'on';
+}
+
+/** CI detection (GitHub Actions, etc.). */
+function isCiEnvironment(env: NodeJS.ProcessEnv = process.env): boolean {
+  return isTruthyEnv(env.CI) || isTruthyEnv(env.GITHUB_ACTIONS);
+}
+
+/** Jest/test detection (unit or e2e). */
+function isTestEnvironment(env: NodeJS.ProcessEnv = process.env): boolean {
+  // JEST_WORKER_ID is set by Jest; NODE_ENV often "test" in jest configs
+  return (
+    isTruthyEnv(env.JEST_WORKER_ID) ||
+    (env.NODE_ENV ?? '').toLowerCase() === 'test'
+  );
+}
+
+/** Should we skip orchestration right now? */
+function shouldSkipOrchestration(
+  env: NodeJS.ProcessEnv = process.env,
+): boolean {
+  if (isCiEnvironment(env)) return true; // never orchestrate in CI
+  const inTests = isTestEnvironment(env);
+  const explicitEnable =
+    isTruthyEnv(env.DOCKER_E2E) || isTruthyEnv(env.MONGO_AUTO_START);
+  // During tests, only run if explicitly enabled
+  if (inTests && !explicitEnable) return true;
+  return false;
+}
+
 /**
  * Core bootstrap that ensures a local MongoDB container is present, running, and TCP-ready.
  * Infra-only (no HTTP). Runs on every app start and is idempotent.
+ * Auto-disabled in CI; auto-disabled in Jest tests unless explicitly enabled (DOCKER_E2E=1 or MONGO_AUTO_START=1).
  */
 @Injectable()
 export class MongoInfraBootstrap implements OnApplicationBootstrap {
@@ -24,7 +59,17 @@ export class MongoInfraBootstrap implements OnApplicationBootstrap {
 
   public async onApplicationBootstrap(): Promise<void> {
     const cfg = loadMongoInfraConfig();
+    const env = process.env;
 
+    // Global gates
+    if (shouldSkipOrchestration(env)) {
+      this.logger.log(
+        'Test/CI environment detected; skipping Mongo orchestration.',
+      );
+      return;
+    }
+
+    // Explicit opt-out
     if (!cfg.autoStart) {
       this.logger.log('Mongo auto-start disabled. Skipping orchestration.');
       return;
@@ -50,7 +95,6 @@ export class MongoInfraBootstrap implements OnApplicationBootstrap {
       this.logger.log(`Mongo is ready. URI: ${this.maskMongoUri(uri)}`);
     } catch (err) {
       if (err instanceof DockerError && err.code === 'DOCKER_UNAVAILABLE') {
-        // DB is core infra; make the failure explicit.
         this.logger.error(
           'Docker daemon unavailable; Mongo infra cannot start.',
         );
