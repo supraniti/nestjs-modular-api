@@ -1,2 +1,2 @@
-export * from './fields.types';
+export * from '@lib/fields';
 export * from './fields.seeds';

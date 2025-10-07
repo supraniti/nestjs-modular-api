@@ -5,7 +5,7 @@ import {
   getMongoClient,
   closeMongoClient,
 } from './internal/mongodb.client';
-import { DEFAULT_DB_NAME, isNonEmptyString } from './internal/mongodb.types';
+import { DEFAULT_DB_NAME, isNonEmptyString } from '@lib/mongodb';
 import { MongoActionError } from '../../lib/errors/MongoActionError';
 
 @Injectable()

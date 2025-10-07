@@ -4,7 +4,7 @@ import {
   APPLICATION_DATA_DIR,
   CONTAINERS_DATA_DIR,
   PortMapping,
-} from './docker.types';
+} from './types';
 
 /**
  * Resolve the repository root.

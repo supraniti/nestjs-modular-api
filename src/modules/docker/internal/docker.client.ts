@@ -14,14 +14,12 @@ import {
   DOCKER_LABEL_KEY,
   DOCKER_LABEL_VALUE,
   RunContainerOptions,
-} from './docker.types';
-import {
   envObjectToList,
   ensureContainerDataDir,
   toBindSpec,
   toPortBindings,
   assertValidContainerName,
-} from './path.util';
+} from '@lib/docker';
 import { DockerError, wrapDockerError } from './docker.error';
 
 /** Promise timeout helper that rejects with a real Error. */

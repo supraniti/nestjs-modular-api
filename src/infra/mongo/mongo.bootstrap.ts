@@ -1,10 +1,7 @@
 import { Injectable, Logger, OnApplicationBootstrap } from '@nestjs/common';
 import { DockerService } from '../../modules/docker/docker.service';
 import { DockerError } from '../../modules/docker/internal/docker.error';
-import type {
-  ContainerStateInfo,
-  ContainerStatus,
-} from '../../modules/docker/internal/docker.types';
+import type { ContainerStateInfo, ContainerStatus } from '@lib/docker';
 import {
   loadMongoInfraConfig,
   toMongoRunOptions,

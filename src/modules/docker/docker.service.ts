@@ -4,14 +4,14 @@ import type {
   ContainerStateInfo,
   RunContainerOptions,
   RunContainerResult,
-} from './internal/docker.types';
+} from '@lib/docker';
 import {
   DEFAULT_CREATE_TIMEOUT_MS,
   DEFAULT_RESTART_TIMEOUT_MS,
   DEFAULT_START_TIMEOUT_MS,
   DEFAULT_STOP_TIMEOUT_MS,
   DEFAULT_INSPECT_TIMEOUT_MS,
-} from './internal/docker.types';
+} from '@lib/docker';
 import { DockerClient } from './internal/docker.client';
 import { DockerError } from './internal/docker.error';
 

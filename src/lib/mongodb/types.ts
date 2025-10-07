@@ -4,10 +4,7 @@ import type { Db } from 'mongodb';
 /** Default DB name used when callers don't pass one. */
 export const DEFAULT_DB_NAME = 'modapi' as const;
 
-/** Basic guard used only for collection name sanity. */
-export function isNonEmptyString(value: unknown): value is string {
-  return typeof value === 'string' && value.length > 0;
-}
+export { isNonEmptyString } from '../utils/strings';
 
 /** Signature for a function that returns a Db instance for a given name. */
 export type GetDb = (dbName?: string) => Promise<Db>;

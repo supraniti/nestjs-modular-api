@@ -1,12 +1,12 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { DockerService } from '../docker.service';
 import { DockerClient } from '../internal/docker.client';
-import {
+import type {
   ActionResult,
   ContainerStateInfo,
   RunContainerOptions,
   RunContainerResult,
-} from '../internal/docker.types';
+} from '@lib/docker';
 import { DockerError } from '../internal/docker.error';
 
 type Mock<T> = jest.Mock<T extends Promise<unknown> ? T : never, any[]>;

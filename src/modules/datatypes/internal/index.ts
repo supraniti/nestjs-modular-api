@@ -1,1 +1,1 @@
-export * from './datatypes.types';
+export * from '@lib/datatypes';
