@@ -6,7 +6,7 @@ import type {
   ContainerStateInfo,
   RunContainerOptions,
   RunContainerResult,
-} from '../../../modules/docker/internal/docker.types';
+} from '@lib/docker';
 import { DockerError } from '../../../modules/docker/internal/docker.error';
 import * as TcpWait from '../../../lib/net/tcp-wait';
 

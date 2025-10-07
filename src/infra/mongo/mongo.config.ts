@@ -1,4 +1,4 @@
-import type { RunContainerOptions } from '../../modules/docker/internal/docker.types';
+import type { RunContainerOptions } from '@lib/docker';
 
 /**
  * Environment variable names for Mongo infra.

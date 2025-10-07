@@ -6,7 +6,7 @@ import {
   type FieldDoc,
   type FieldDocBase,
   isFieldKind,
-} from '../internal/fields.types';
+} from '@lib/fields';
 import { FIELD_SEEDS, isSeedKey } from '../internal/fields.seeds';
 import { MongoActionError } from '../../../lib/errors/MongoActionError';
 

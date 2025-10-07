@@ -1,7 +1,7 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { DockerModule } from '../../src/modules/docker/docker.module';
 import { DockerService } from '../../src/modules/docker/docker.service';
-import { ENV_DOCKER_E2E } from '../../src/modules/docker/internal/docker.types';
+import { ENV_DOCKER_E2E } from '@lib/docker/types';
 
 // Generous timeout for first-time image pulls on slow networks.
 jest.setTimeout(180_000);

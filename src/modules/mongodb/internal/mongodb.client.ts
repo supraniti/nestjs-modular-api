@@ -3,7 +3,7 @@ import {
   loadMongoInfraConfig,
   buildMongoUri,
 } from '../../../infra/mongo/mongo.config';
-import { DEFAULT_DB_NAME, type GetDb } from './mongodb.types';
+import { DEFAULT_DB_NAME, type GetDb } from '@lib/mongodb';
 
 /**
  * Lazy singleton for a MongoDB client.

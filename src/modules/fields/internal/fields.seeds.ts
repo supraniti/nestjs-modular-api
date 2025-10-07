@@ -1,5 +1,5 @@
-import type { FieldKind } from './fields.types';
-import { isKebabCaseKey, normalizeKeyLower } from './fields.types';
+import type { FieldKind } from '@lib/fields';
+import { isKebabCaseKey, normalizeKeyLower } from '@lib/fields';
 
 /**
  * Shape of a field seed document before insertion.

@@ -163,11 +163,3 @@ export function isEnumConstraints(value: unknown): value is EnumConstraints {
     v.caseInsensitive === undefined || typeof v.caseInsensitive === 'boolean';
   return okValues && okCase;
 }
-
-/* =========================
- *     Small string guard
- * ========================= */
-
-export function isNonEmptyString(value: unknown): value is string {
-  return typeof value === 'string' && value.length > 0;
-}
