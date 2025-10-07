@@ -414,3 +414,145 @@ POST /api/datatypes/update-field
 Remove field:
 POST /api/datatypes/remove-field
 { "key": "article", "fieldKey": "string" }
+
+Datatypes Module (HTTP)
+
+Date: 2025-10-07
+Path: src/modules/datatypes
+Purpose: Manage versioned “data type” definitions stored in MongoDB. A datatype describes fields, storage mode, and (later) indexes/policies/hooks. Other modules will use these definitions to validate and route entity CRUD.
+
+Status model
+
+draft → editable
+
+published → immutable structure (for now), used by runtime entity CRUD
+
+Transitions provided via dedicated endpoints (publish / unpublish)
+
+Storage modes
+
+single — all entity instances live in one shared collection (future entity module will route by discriminator)
+
+perType — each datatype gets its own collection (created on publish if missing)
+
+Collections
+
+datatypes — configuration documents (one per datatype key)
+
+Per-type entity collections (only when storage.mode === 'perType') use:
+data\_<keyLower> (created during publish if absent)
+
+Field rules (Stage 1)
+
+Fields reference canonical keys from the Fields module.
+
+Flags: required, array, unique, order, optional constraints
+
+Invalid combination: unique: true and array: true → rejected
+
+Indexing (Stage 1): for unique: true scalar fields on perType storage, a named unique index is ensured during publish:
+
+Name: uniq*<typeKeyLower>*<fieldKey>
+
+Keys: { [fieldKey]: 1 }
+
+Error model
+
+Domain errors extend AppError and are mapped to HTTP 400 in the controller for predictable client behavior.
+
+Mongo driver errors are wrapped as MongoActionError with contextual operation, trimmed argsPreview, and driverCode (when available).
+
+Routes
+
+GET /api/datatypes/list
+→ { datatypes: DatatypeDto[] }
+
+GET /api/datatypes/get?key=<key>
+→ { datatype: DatatypeDto | null }
+
+POST /api/datatypes/create (201 Created)
+Body: { key, label, storage: { mode: "single" | "perType" }, fields?: FieldInput[], indexes?: IndexSpec[] }
+→ { datatype: DatatypeDto }
+
+POST /api/datatypes/add-field (200 or 201)
+Body: { key, field: FieldInput }
+→ { datatype: DatatypeDto }
+
+POST /api/datatypes/update-field (200)
+Body: { key, fieldKey, patch: Partial<Pick<FieldInput, "required"|"array"|"unique"|"order"|"constraints">> }
+→ { datatype: DatatypeDto }
+
+POST /api/datatypes/remove-field (200)
+Body: { key, fieldKey }
+→ { datatype: DatatypeDto }
+
+POST /api/datatypes/publish (200 or 201)
+Body: { key }
+→ { datatype: DatatypeDto }
+Creates per-type collection and ensures unique indexes for unique scalar fields.
+
+POST /api/datatypes/unpublish (200 or 201)
+Body: { key }
+→ { datatype: DatatypeDto }
+
+DTO notes
+
+DatatypeDto normalizes \_id to hex string and includes: key, label, version, status, storage, fields[], optional indexes[], timestamps, and locked.
+
+Testing
+
+Unit (CI-safe):
+
+src/modules/datatypes/tests/datatypes.service.spec.ts
+
+src/modules/datatypes/tests/datatypes.controller.spec.ts
+
+Publish/Unpublish focused unit tests (real logic, in-memory typed DB stubs):
+
+src/modules/datatypes/tests/datatypes.publish.service.spec.ts
+
+src/modules/datatypes/tests/datatypes.publish.controller.spec.ts
+
+E2E (local, real Mongo):
+
+test/modules/datatypes.e2e-spec.ts
+
+Uses a unique datatype key per run to avoid dup-key collisions.
+
+Expects 201 for create; tolerant of 200/201 for other POSTs (add-field/publish/unpublish).
+
+Skipped in CI; requires Docker Desktop running and MONGO_AUTO_START=1 locally.
+
+Environment
+
+Shares infra config with Mongo bootstrap:
+
+MONGO_AUTO_START=1 (default locally)
+
+MONGO\_\* connection variables as documented in the Mongo Infra section
+
+E2E runs only when not on CI; CI keeps Docker gated off.
+
+Next planned steps
+
+Entities module (internal + HTTP) operating over published datatypes:
+
+Runtime validation (initial minimal checks; Zod/Typsafe generator later)
+
+Routing by storage mode (single vs perType)
+
+Basic computed field hooks (stubs)
+
+RBAC/UBAC and policy stubs (later)
+
+Key files
+
+src/modules/datatypes/datatypes.module.ts
+
+src/modules/datatypes/datatypes.controller.ts
+
+src/modules/datatypes/datatypes.service.ts
+
+src/modules/datatypes/internal/\*
+
+src/modules/datatypes/dto/\*

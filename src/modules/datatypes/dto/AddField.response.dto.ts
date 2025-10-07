@@ -1,1 +1,1 @@
-export type { GetDatatypeResponseDto } from './ListDatatypes.response.dto';
+export type { AddFieldResponseDto } from './ListDatatypes.response.dto';

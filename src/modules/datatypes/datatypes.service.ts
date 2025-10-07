@@ -1,612 +1,497 @@
 import { Injectable } from '@nestjs/common';
-import type { Collection, Db } from 'mongodb';
+import type {
+  Collection,
+  CreateIndexesOptions,
+  Db,
+  Filter,
+  ObjectId,
+} from 'mongodb';
 import { MongodbService } from '../mongodb/mongodb.service';
+import { MongoActionError } from '../../lib/errors/MongoActionError';
 import {
   DATATYPES_COLLECTION,
-  type DataTypeDocBase,
   type DataTypeDoc,
   type EntityField,
   type EntityIndexSpec,
-  type StorageMode,
   collectionNameForDatatype,
   uniqueIndexName,
 } from './internal';
-import {
-  FIELDS_COLLECTION,
-  isKebabCaseKey,
-  normalizeKeyLower,
-} from '../fields/internal';
-import { MongoActionError } from '../../lib/errors/MongoActionError';
+import { FIELDS_COLLECTION } from '../fields/internal';
+
+type CreateInput = {
+  readonly key: string;
+  readonly label: string;
+  readonly fields?: ReadonlyArray<
+    Pick<
+      EntityField,
+      'fieldKey' | 'required' | 'array' | 'unique' | 'order' | 'constraints'
+    >
+  >;
+  readonly storage?: { readonly mode: 'single' | 'perType' };
+  readonly indexes?: ReadonlyArray<EntityIndexSpec>;
+};
+
+type UpdateFieldPatch = Partial<
+  Pick<EntityField, 'required' | 'array' | 'unique' | 'order' | 'constraints'>
+>;
 
 @Injectable()
 export class DatatypesService {
   constructor(private readonly mongo: MongodbService) {}
 
-  /* =========================
-   *       Public API
-   * ========================= */
+  /* ─────────────────────────── Public API ─────────────────────────── */
 
-  /** List all datatypes (drafts only at Stage 2A). */
   public async list(dbName?: string): Promise<ReadonlyArray<DataTypeDoc>> {
     try {
-      const coll = await this.getDatatypesCollection(dbName);
-      const docs = await coll.find({}).toArray();
-      return docs;
-    } catch (err) {
-      throw MongoActionError.wrap(err, {
-        operation: 'datatypes.list',
-        dbName,
-      });
+      const db = await this.mongo.getDb(dbName);
+      const docs = await this.coll(db).find({}).toArray();
+      return docs as ReadonlyArray<DataTypeDoc>;
+    } catch (err: unknown) {
+      const cause = err instanceof Error ? err.message : undefined;
+      throw MongoActionError.wrap(
+        'Failed to list datatypes',
+        { operation: 'datatypes.list', dbName },
+        cause,
+      );
     }
   }
 
-  /** Get a datatype by kebab-case key. */
   public async getByKey(
     key: string,
     dbName?: string,
   ): Promise<DataTypeDoc | null> {
-    if (!isKebabCaseKey(key)) {
-      throw new MongoActionError('Datatype key must be kebab-case', {
-        operation: 'datatypes.getByKey',
-        argsPreview: { key },
-        dbName,
-      });
-    }
-    const keyLower = normalizeKeyLower(key);
-
+    const keyLower = key.trim().toLowerCase();
     try {
-      const coll = await this.getDatatypesCollection(dbName);
-      const doc = await coll.findOne({ keyLower });
-      return doc;
-    } catch (err) {
-      throw MongoActionError.wrap(err, {
-        operation: 'datatypes.getByKey',
-        argsPreview: { key },
-        dbName,
-      });
+      const db = await this.mongo.getDb(dbName);
+      const filter: Filter<DataTypeDoc> = { keyLower };
+      const doc = await this.coll(db).findOne(filter);
+      return (doc as DataTypeDoc | null) ?? null;
+    } catch (err: unknown) {
+      const cause = err instanceof Error ? err.message : undefined;
+      throw MongoActionError.wrap(
+        'Failed to get datatype',
+        { operation: 'datatypes.getByKey', dbName, argsPreview: { key } },
+        cause,
+      );
     }
   }
 
-  /**
-   * Create a **draft** datatype definition.
-   * - Validates field references exist.
-   * - Enforces rule: `unique && array` is invalid (Stage 2A).
-   * - If storage.mode === 'perType', ensures backing collection exists and
-   *   creates unique indexes for composed fields that specify `unique: true`.
-   */
   public async create(
-    input: {
-      key: string;
-      label: string;
-      fields?: ReadonlyArray<EntityField>;
-      storage?: { mode?: StorageMode };
-      indexes?: ReadonlyArray<EntityIndexSpec>;
-    },
+    input: CreateInput,
     dbName?: string,
   ): Promise<DataTypeDoc> {
-    const { key, label } = input;
+    const key = input.key.trim();
+    const keyLower = key.toLowerCase();
 
-    if (!isKebabCaseKey(key)) {
-      throw new MongoActionError('Datatype key must be kebab-case', {
-        operation: 'datatypes.create',
-        argsPreview: { key },
-        dbName,
-      });
-    }
-
-    const keyLower = normalizeKeyLower(key);
-    const fields = input.fields ?? [];
-    const storageMode: StorageMode = input.storage?.mode ?? 'single';
-    const now = new Date();
+    this.ensureFieldsWellFormed(input.fields ?? []);
+    await this.ensureFieldKeysExist(input.fields ?? [], dbName);
 
     try {
       const db = await this.mongo.getDb(dbName);
-      const coll = await this.getDatatypesCollection(dbName);
+      const coll = this.coll(db);
 
-      // Ensure unique index on keyLower exists
-      await coll.createIndex(
-        { keyLower: 1 },
-        { unique: true, name: 'uniq_datatypes_keyLower' },
-      );
-
-      // Uniqueness check
-      const existing = await coll.findOne({ keyLower });
-      if (existing) {
-        throw new MongoActionError('Datatype key already exists', {
-          operation: 'datatypes.create',
-          argsPreview: { key },
-          dbName,
-        });
-      }
-
-      // Validate field composition
-      await this.validateFieldsExist(db, fields, dbName);
-      this.enforceCompositionRules(key, fields);
-
-      // Prepare doc
-      const doc: DataTypeDocBase = {
+      const now = new Date();
+      const toInsert: Omit<DataTypeDoc, '_id'> = {
         key,
         keyLower,
-        label,
+        label: input.label,
         version: 1,
         status: 'draft',
-        fields,
-        indexes: input.indexes,
-        policies: undefined,
-        hooks: undefined,
-        storage: { mode: storageMode },
+        fields: (input.fields ?? []).map((f) => ({ ...f })),
+        storage: { mode: input.storage?.mode ?? 'single' },
+        indexes:
+          input.indexes?.map((i) => ({
+            keys: { ...i.keys },
+            options: i.options ? { ...i.options } : undefined,
+          })) ?? [],
         locked: false,
         createdAt: now,
         updatedAt: now,
       };
 
-      // Insert definition
-      const res = await coll.insertOne(doc);
-
-      // Storage-specific: perType → ensure collection + field indexes
-      if (storageMode === 'perType') {
-        const entityCollName = collectionNameForDatatype(key);
-        await this.ensureCollection(db, entityCollName);
-        await this.syncPerTypeUniqueIndexes(db, key, fields);
-      }
-
-      const created = await coll.findOne({ _id: res.insertedId });
+      const ins = await coll.insertOne(toInsert as unknown as DataTypeDoc);
+      const created = (await coll.findOne({
+        _id: ins.insertedId as unknown as ObjectId,
+      })) as DataTypeDoc | null;
       if (!created) {
-        throw new MongoActionError('Failed to load created datatype', {
-          operation: 'datatypes.create',
-          argsPreview: { key },
-          dbName,
-        });
+        throw new Error('Inserted datatype not found');
       }
+
+      if (created.storage.mode === 'perType') {
+        await this.ensurePerTypeCollectionAndUniqueIndexes(db, created);
+      }
+
       return created;
-    } catch (err) {
-      throw MongoActionError.wrap(err, {
-        operation: 'datatypes.create',
-        argsPreview: {
-          key,
-          label,
-          fields: summarize(fields),
-          storage: storageMode,
-        },
-        dbName,
-      });
-    }
-  }
-
-  /** Add a field to a draft datatype. */
-  public async addField(
-    datatypeKey: string,
-    field: EntityField,
-    dbName?: string,
-  ): Promise<DataTypeDoc> {
-    if (!isKebabCaseKey(datatypeKey)) {
-      throw new MongoActionError('Datatype key must be kebab-case', {
-        operation: 'datatypes.addField',
-        argsPreview: { datatypeKey },
-        dbName,
-      });
-    }
-    const keyLower = normalizeKeyLower(datatypeKey);
-
-    try {
-      const db = await this.mongo.getDb(dbName);
-      const coll = await this.getDatatypesCollection(dbName);
-
-      const current = await coll.findOne({ keyLower });
-      if (!current) {
-        throw new MongoActionError('Datatype not found', {
-          operation: 'datatypes.addField',
-          argsPreview: { datatypeKey },
-          dbName,
-        });
-      }
-      if (current.status !== 'draft') {
-        throw new MongoActionError('Only draft datatypes can be modified', {
-          operation: 'datatypes.addField',
-          argsPreview: { datatypeKey },
-          dbName,
-        });
-      }
-
-      // Validate
-      await this.validateFieldsExist(db, [field], dbName);
-      this.enforceCompositionRules(current.key, [field]);
-
-      // Append
-      const updatedFields = [...current.fields, field];
-      const setUpdate: Record<string, unknown> = {
-        fields: updatedFields,
-        updatedAt: new Date(),
-      };
-      await coll.updateOne({ _id: current._id }, { $set: setUpdate });
-
-      // Index management for perType + unique
-      if (
-        current.storage.mode === 'perType' &&
-        field.unique === true &&
-        field.array === false
-      ) {
-        await this.createPerTypeUniqueIndex(db, current.key, field.fieldKey);
-      }
-
-      const updated = await coll.findOne({ _id: current._id });
-      if (!updated) {
-        throw new MongoActionError('Failed to load updated datatype', {
-          operation: 'datatypes.addField',
-          argsPreview: { datatypeKey },
-          dbName,
-        });
-      }
-      return updated;
-    } catch (err) {
-      throw MongoActionError.wrap(err, {
-        operation: 'datatypes.addField',
-        argsPreview: { datatypeKey, field: summarize(field) },
-        dbName,
-      });
-    }
-  }
-
-  /**
-   * Update a field within a draft datatype.
-   * - Forbids changing `fieldKey` in Stage 2A.
-   * - Handles unique toggle for perType storage (create/drop index).
-   */
-  public async updateField(
-    datatypeKey: string,
-    fieldKey: string,
-    patch: Partial<EntityField>,
-    dbName?: string,
-  ): Promise<DataTypeDoc> {
-    if (!isKebabCaseKey(datatypeKey)) {
-      throw new MongoActionError('Datatype key must be kebab-case', {
-        operation: 'datatypes.updateField',
-        argsPreview: { datatypeKey },
-        dbName,
-      });
-    }
-    if (!isKebabCaseKey(fieldKey)) {
-      throw new MongoActionError('Field key must be kebab-case', {
-        operation: 'datatypes.updateField',
-        argsPreview: { fieldKey },
-        dbName,
-      });
-    }
-
-    try {
-      const db = await this.mongo.getDb(dbName);
-      const coll = await this.getDatatypesCollection(dbName);
-      const keyLower = normalizeKeyLower(datatypeKey);
-
-      const current = await coll.findOne({ keyLower });
-      if (!current) {
-        throw new MongoActionError('Datatype not found', {
-          operation: 'datatypes.updateField',
-          argsPreview: { datatypeKey },
-          dbName,
-        });
-      }
-      if (current.status !== 'draft') {
-        throw new MongoActionError('Only draft datatypes can be modified', {
-          operation: 'datatypes.updateField',
-          argsPreview: { datatypeKey },
-          dbName,
-        });
-      }
-
-      const idx = current.fields.findIndex(
-        (f) => normalizeKeyLower(f.fieldKey) === normalizeKeyLower(fieldKey),
+    } catch (err: unknown) {
+      const cause = err instanceof Error ? err.message : undefined;
+      throw MongoActionError.wrap(
+        'Failed to create datatype',
+        { operation: 'datatypes.create', dbName, argsPreview: { key } },
+        cause,
       );
-      if (idx === -1) {
-        throw new MongoActionError('Field not found in datatype', {
-          operation: 'datatypes.updateField',
-          argsPreview: { datatypeKey, fieldKey },
+    }
+  }
+
+  public async addField(
+    key: string,
+    field: Pick<
+      EntityField,
+      'fieldKey' | 'required' | 'array' | 'unique' | 'order' | 'constraints'
+    >,
+    dbName?: string,
+  ): Promise<DataTypeDoc> {
+    this.ensureFieldsWellFormed([field]);
+    await this.ensureFieldKeysExist([field], dbName);
+
+    try {
+      const db = await this.mongo.getDb(dbName);
+      const doc = await this.mustGetByKey(db, key);
+      this.ensureDraft(doc, 'addField');
+
+      if (doc.fields.some((f) => f.fieldKey === field.fieldKey)) {
+        throw MongoActionError.wrap('Field already exists on datatype', {
+          operation: 'datatypes.addField',
           dbName,
+          argsPreview: { key, fieldKey: field.fieldKey },
         });
       }
 
-      // Forbid renaming fieldKey at Stage 2A
+      const nextFields = [...doc.fields, { ...field }];
+      await this.coll(db).updateOne(
+        { _id: doc._id },
+        { $set: { fields: nextFields, updatedAt: new Date() } },
+      );
+
       if (
-        patch.fieldKey &&
-        normalizeKeyLower(patch.fieldKey) !== normalizeKeyLower(fieldKey)
+        doc.storage.mode === 'perType' &&
+        field.unique === true &&
+        field.array !== true
       ) {
-        throw new MongoActionError(
-          'Renaming fieldKey is not allowed in this stage',
-          {
-            operation: 'datatypes.updateField',
-            argsPreview: { patch: summarize(patch) },
-            dbName,
-          },
+        const entity = db.collection(collectionNameForDatatype(doc.key));
+        const idxName = uniqueIndexName(doc.key, field.fieldKey);
+        await entity.createIndex(
+          { [field.fieldKey]: 1 },
+          { unique: true, name: idxName },
         );
       }
 
-      const original = current.fields[idx];
-      const merged: EntityField = {
-        fieldKey: original.fieldKey,
-        required: patch.required ?? original.required,
-        array: patch.array ?? original.array,
-        unique: patch.unique ?? original.unique,
-        constraints: patch.constraints ?? original.constraints,
-        order: patch.order ?? original.order,
-      };
+      const updated = await this.coll(db).findOne({ _id: doc._id });
+      return updated as DataTypeDoc;
+    } catch (err: unknown) {
+      const cause = err instanceof Error ? err.message : undefined;
+      throw MongoActionError.wrap(
+        'Failed to add field to datatype',
+        {
+          operation: 'datatypes.addField',
+          dbName,
+          argsPreview: { key, fieldKey: field.fieldKey },
+        },
+        cause,
+      );
+    }
+  }
 
-      // Validate composition rule: unique && array forbidden
-      this.enforceCompositionRules(current.key, [merged]);
+  public async updateField(
+    key: string,
+    fieldKey: string,
+    patch: UpdateFieldPatch,
+    dbName?: string,
+  ): Promise<DataTypeDoc> {
+    if (patch.array === true && patch.unique === true) {
+      throw MongoActionError.wrap('A field cannot be both unique and array', {
+        operation: 'datatypes.updateField.validate',
+        dbName,
+        argsPreview: { key, fieldKey },
+      });
+    }
 
-      // Persist
-      const newFields = current.fields.slice();
-      newFields[idx] = merged;
+    try {
+      const db = await this.mongo.getDb(dbName);
+      const doc = await this.mustGetByKey(db, key);
+      this.ensureDraft(doc, 'updateField');
 
-      const setUpdate: Record<string, unknown> = {
-        fields: newFields,
-        updatedAt: new Date(),
-      };
-      await coll.updateOne({ _id: current._id }, { $set: setUpdate });
+      const i = doc.fields.findIndex((f) => f.fieldKey === fieldKey);
+      const current = i >= 0 ? doc.fields[i] : undefined;
+      if (!current) {
+        throw MongoActionError.wrap('Field not found on datatype', {
+          operation: 'datatypes.updateField',
+          dbName,
+          argsPreview: { key, fieldKey },
+        });
+      }
 
-      // Index toggle for perType
-      if (current.storage.mode === 'perType') {
-        const wasUnique = original.unique === true && original.array === false;
-        const nowUnique = merged.unique === true && merged.array === false;
+      const merged: EntityField = { ...current, ...patch };
+      this.ensureFieldsWellFormed([merged]);
 
-        if (!wasUnique && nowUnique) {
-          await this.createPerTypeUniqueIndex(
-            db,
-            current.key,
-            original.fieldKey,
+      const nextFields = [...doc.fields];
+      nextFields[i] = merged;
+
+      await this.coll(db).updateOne(
+        { _id: doc._id },
+        { $set: { fields: nextFields, updatedAt: new Date() } },
+      );
+
+      if (doc.storage.mode === 'perType') {
+        const entity = db.collection(collectionNameForDatatype(doc.key));
+        const uniqueNow = merged.unique === true && merged.array !== true;
+        const uniqueWas = current.unique === true && current.array !== true;
+        const idxName = uniqueIndexName(doc.key, fieldKey);
+
+        if (!uniqueWas && uniqueNow) {
+          await entity.createIndex(
+            { [fieldKey]: 1 },
+            { unique: true, name: idxName },
           );
-        } else if (wasUnique && !nowUnique) {
-          await this.dropPerTypeUniqueIndex(db, current.key, original.fieldKey);
+        } else if (uniqueWas && !uniqueNow) {
+          try {
+            await (
+              entity as unknown as { dropIndex(name: string): Promise<void> }
+            ).dropIndex(idxName);
+          } catch {
+            /* ignore */
+          }
         }
       }
 
-      const updated = await coll.findOne({ _id: current._id });
-      if (!updated) {
-        throw new MongoActionError('Failed to load updated datatype', {
+      const updated = await this.coll(db).findOne({ _id: doc._id });
+      return updated as DataTypeDoc;
+    } catch (err: unknown) {
+      const cause = err instanceof Error ? err.message : undefined;
+      throw MongoActionError.wrap(
+        'Failed to update field on datatype',
+        {
           operation: 'datatypes.updateField',
-          argsPreview: { datatypeKey, fieldKey },
           dbName,
-        });
-      }
-      return updated;
-    } catch (err) {
-      throw MongoActionError.wrap(err, {
-        operation: 'datatypes.updateField',
-        argsPreview: { datatypeKey, fieldKey, patch: summarize(patch) },
-        dbName,
-      });
+          argsPreview: { key, fieldKey },
+        },
+        cause,
+      );
     }
   }
 
-  /** Remove a field from a draft datatype (drops unique index if needed for perType). */
   public async removeField(
-    datatypeKey: string,
+    key: string,
     fieldKey: string,
     dbName?: string,
   ): Promise<DataTypeDoc> {
-    if (!isKebabCaseKey(datatypeKey)) {
-      throw new MongoActionError('Datatype key must be kebab-case', {
-        operation: 'datatypes.removeField',
-        argsPreview: { datatypeKey },
-        dbName,
-      });
-    }
-    if (!isKebabCaseKey(fieldKey)) {
-      throw new MongoActionError('Field key must be kebab-case', {
-        operation: 'datatypes.removeField',
-        argsPreview: { fieldKey },
-        dbName,
-      });
-    }
-
     try {
       const db = await this.mongo.getDb(dbName);
-      const coll = await this.getDatatypesCollection(dbName);
-      const keyLower = normalizeKeyLower(datatypeKey);
+      const doc = await this.mustGetByKey(db, key);
+      this.ensureDraft(doc, 'removeField');
 
-      const current = await coll.findOne({ keyLower });
-      if (!current) {
-        throw new MongoActionError('Datatype not found', {
+      if (!doc.fields.some((f) => f.fieldKey === fieldKey)) {
+        throw MongoActionError.wrap('Field not found on datatype', {
           operation: 'datatypes.removeField',
-          argsPreview: { datatypeKey },
           dbName,
-        });
-      }
-      if (current.status !== 'draft') {
-        throw new MongoActionError('Only draft datatypes can be modified', {
-          operation: 'datatypes.removeField',
-          argsPreview: { datatypeKey },
-          dbName,
+          argsPreview: { key, fieldKey },
         });
       }
 
-      const idx = current.fields.findIndex(
-        (f) => normalizeKeyLower(f.fieldKey) === normalizeKeyLower(fieldKey),
+      const nextFields = doc.fields.filter((f) => f.fieldKey !== fieldKey);
+      await this.coll(db).updateOne(
+        { _id: doc._id },
+        { $set: { fields: nextFields, updatedAt: new Date() } },
       );
-      if (idx === -1) {
-        throw new MongoActionError('Field not found in datatype', {
+
+      if (doc.storage.mode === 'perType') {
+        const entity = db.collection(collectionNameForDatatype(doc.key));
+        const idxName = uniqueIndexName(doc.key, fieldKey);
+        try {
+          await (
+            entity as unknown as { dropIndex(name: string): Promise<void> }
+          ).dropIndex(idxName);
+        } catch {
+          /* ignore */
+        }
+      }
+
+      const updated = await this.coll(db).findOne({ _id: doc._id });
+      return updated as DataTypeDoc;
+    } catch (err: unknown) {
+      const cause = err instanceof Error ? err.message : undefined;
+      throw MongoActionError.wrap(
+        'Failed to remove field from datatype',
+        {
           operation: 'datatypes.removeField',
-          argsPreview: { datatypeKey, fieldKey },
           dbName,
-        });
-      }
-
-      const removed = current.fields[idx];
-
-      // Drop index if needed (perType + unique)
-      if (
-        current.storage.mode === 'perType' &&
-        removed.unique === true &&
-        removed.array === false
-      ) {
-        await this.dropPerTypeUniqueIndex(db, current.key, removed.fieldKey);
-      }
-
-      const newFields = current.fields
-        .slice(0, idx)
-        .concat(current.fields.slice(idx + 1));
-      const setUpdate: Record<string, unknown> = {
-        fields: newFields,
-        updatedAt: new Date(),
-      };
-      await coll.updateOne({ _id: current._id }, { $set: setUpdate });
-
-      const updated = await coll.findOne({ _id: current._id });
-      if (!updated) {
-        throw new MongoActionError('Failed to load updated datatype', {
-          operation: 'datatypes.removeField',
-          argsPreview: { datatypeKey, fieldKey },
-          dbName,
-        });
-      }
-      return updated;
-    } catch (err) {
-      throw MongoActionError.wrap(err, {
-        operation: 'datatypes.removeField',
-        argsPreview: { datatypeKey, fieldKey },
-        dbName,
-      });
+          argsPreview: { key, fieldKey },
+        },
+        cause,
+      );
     }
   }
 
-  /* =========================
-   *         Internals
-   * ========================= */
+  /** Freeze composition, sync backing collection/indexes, and mark as published. */
+  public async publish(key: string, dbName?: string): Promise<DataTypeDoc> {
+    try {
+      const db = await this.mongo.getDb(dbName);
+      const doc = await this.mustGetByKey(db, key);
 
-  private async getDatatypesCollection(
-    dbName?: string,
-  ): Promise<Collection<DataTypeDocBase>> {
-    const db = await this.mongo.getDb(dbName);
-    const coll: Collection<DataTypeDocBase> =
-      db.collection<DataTypeDocBase>(DATATYPES_COLLECTION);
-    return coll;
-  }
-
-  private async getFieldsCollection(
-    dbName?: string,
-  ): Promise<Collection<{ keyLower: string }>> {
-    const db = await this.mongo.getDb(dbName);
-    // We only need keyLower existence; keep a minimal projection type.
-    const coll: Collection<{ keyLower: string }> = db.collection<{
-      keyLower: string;
-    }>(FIELDS_COLLECTION);
-    return coll;
-  }
-
-  /** Ensure referenced fields exist in `fields` collection. */
-  private async validateFieldsExist(
-    db: Db,
-    fields: ReadonlyArray<EntityField>,
-    dbName?: string,
-  ): Promise<void> {
-    if (fields.length === 0) return;
-    const coll = db.collection<{ keyLower: string }>(FIELDS_COLLECTION);
-    for (const f of fields) {
-      if (!isKebabCaseKey(f.fieldKey)) {
-        throw new MongoActionError('field.fieldKey must be kebab-case', {
-          operation: 'datatypes.validateFieldsExist',
-          argsPreview: { fieldKey: f.fieldKey },
+      if (doc.status !== 'draft') {
+        throw MongoActionError.wrap('Only drafts can be published', {
+          operation: 'datatypes.publish',
           dbName,
+          argsPreview: { key, status: doc.status },
         });
       }
-      const keyLower = normalizeKeyLower(f.fieldKey);
-      const exists = await coll.findOne({ keyLower });
-      if (!exists) {
-        throw new MongoActionError('Referenced fieldKey does not exist', {
-          operation: 'datatypes.validateFieldsExist',
-          argsPreview: { fieldKey: f.fieldKey },
-          dbName,
-        });
+
+      if (doc.storage.mode === 'perType') {
+        await this.ensurePerTypeCollectionAndUniqueIndexes(db, doc);
       }
+
+      await this.coll(db).updateOne(
+        { _id: doc._id },
+        { $set: { status: 'published', updatedAt: new Date() } },
+      );
+      const updated = await this.coll(db).findOne({ _id: doc._id });
+      return updated as DataTypeDoc;
+    } catch (err: unknown) {
+      const cause = err instanceof Error ? err.message : undefined;
+      throw MongoActionError.wrap(
+        'Failed to publish datatype',
+        { operation: 'datatypes.publish', dbName, argsPreview: { key } },
+        cause,
+      );
     }
   }
 
-  /** Composition rule: forbid unique && array together (Stage 2A). */
-  private enforceCompositionRules(
-    datatypeKey: string,
-    fields: ReadonlyArray<EntityField>,
-  ): void {
-    for (const f of fields) {
-      if (f.unique === true && f.array === true) {
-        throw new MongoActionError(
-          'A field cannot be both unique and array in this stage',
+  /** Mark as draft to allow editing again (dev-only for this stage). */
+  public async unpublish(key: string, dbName?: string): Promise<DataTypeDoc> {
+    try {
+      const db = await this.mongo.getDb(dbName);
+      const doc = await this.mustGetByKey(db, key);
+
+      if (doc.status !== 'published') {
+        throw MongoActionError.wrap(
+          'Only published datatypes can be unpublished',
           {
-            operation: 'datatypes.compositionRules',
-            argsPreview: { datatypeKey, fieldKey: f.fieldKey },
+            operation: 'datatypes.unpublish',
+            dbName,
+            argsPreview: { key, status: doc.status },
           },
         );
       }
+
+      await this.coll(db).updateOne(
+        { _id: doc._id },
+        { $set: { status: 'draft', updatedAt: new Date() } },
+      );
+      const updated = await this.coll(db).findOne({ _id: doc._id });
+      return updated as DataTypeDoc;
+    } catch (err: unknown) {
+      const cause = err instanceof Error ? err.message : undefined;
+      throw MongoActionError.wrap(
+        'Failed to unpublish datatype',
+        { operation: 'datatypes.unpublish', dbName, argsPreview: { key } },
+        cause,
+      );
     }
   }
 
-  /** Ensure a collection exists (idempotent). */
-  private async ensureCollection(db: Db, name: string): Promise<void> {
-    const existing = await db.listCollections({ name }).toArray();
-    if (existing.length === 0) {
-      await db.createCollection(name);
+  /* ─────────────────────────── Internals ─────────────────────────── */
+
+  private coll(db: Db): Collection<DataTypeDoc> {
+    return db.collection<DataTypeDoc>(DATATYPES_COLLECTION);
+  }
+
+  private async mustGetByKey(db: Db, key: string): Promise<DataTypeDoc> {
+    const keyLower = key.trim().toLowerCase();
+    const filter: Filter<DataTypeDoc> = { keyLower };
+    const doc = (await this.coll(db).findOne(filter)) as DataTypeDoc | null;
+    if (!doc) {
+      throw MongoActionError.wrap('Datatype not found', {
+        operation: 'datatypes.mustGetByKey',
+        argsPreview: { key },
+      });
+    }
+    return doc;
+  }
+
+  private ensureDraft(
+    doc: DataTypeDoc,
+    action: 'addField' | 'updateField' | 'removeField',
+  ): void {
+    if (doc.status !== 'draft') {
+      throw MongoActionError.wrap(`Cannot ${action} on a published datatype`, {
+        operation: `datatypes.${action}`,
+        argsPreview: { key: doc.key, status: doc.status },
+      });
     }
   }
 
-  /** Create all per-type unique indexes for the given composition (idempotent). */
-  private async syncPerTypeUniqueIndexes(
-    db: Db,
-    datatypeKey: string,
-    fields: ReadonlyArray<EntityField>,
-  ): Promise<void> {
+  private ensureFieldsWellFormed(
+    fields: ReadonlyArray<
+      Pick<EntityField, 'fieldKey' | 'required' | 'array' | 'unique'>
+    >,
+  ): void {
     for (const f of fields) {
-      if (f.unique === true && f.array === false) {
-        await this.createPerTypeUniqueIndex(db, datatypeKey, f.fieldKey);
+      if (f.array === true && f.unique === true) {
+        throw MongoActionError.wrap('A field cannot be both unique and array', {
+          operation: 'datatypes.field.validate',
+          argsPreview: { fieldKey: f.fieldKey },
+        });
       }
     }
   }
 
-  /** Create a single per-type unique index (idempotent). */
-  private async createPerTypeUniqueIndex(
-    db: Db,
-    datatypeKey: string,
-    fieldKey: string,
+  private async ensureFieldKeysExist(
+    fields: ReadonlyArray<Pick<EntityField, 'fieldKey'>>,
+    dbName?: string,
   ): Promise<void> {
-    const collName = collectionNameForDatatype(datatypeKey);
-    await this.ensureCollection(db, collName);
-    const coll = db.collection(collName);
-    const name = uniqueIndexName(datatypeKey, fieldKey);
-    await coll.createIndex({ [fieldKey]: 1 }, { unique: true, name });
-  }
-
-  /** Drop a single per-type unique index if it exists. */
-  private async dropPerTypeUniqueIndex(
-    db: Db,
-    datatypeKey: string,
-    fieldKey: string,
-  ): Promise<void> {
-    const collName = collectionNameForDatatype(datatypeKey);
-    const coll = db.collection(collName);
-    const name = uniqueIndexName(datatypeKey, fieldKey);
-
-    // Make array type explicit to avoid 'any' member access
-    type IndexDoc = { readonly name?: unknown };
-    const idxList = (await coll
-      .listIndexes()
-      .toArray()) as ReadonlyArray<IndexDoc>;
-    const has = idxList.some(
-      (i) => typeof i.name === 'string' && i.name === name,
+    if (fields.length === 0) return;
+    const keys = Array.from(
+      new Set(fields.map((f) => f.fieldKey.toLowerCase())),
     );
+    const db = await this.mongo.getDb(dbName);
+    const coll = db.collection<{ keyLower: string }>(FIELDS_COLLECTION);
 
-    if (has) {
-      await coll.dropIndex(name);
+    const filter: Filter<{ keyLower: string }> = { keyLower: { $in: keys } };
+    const docs = await coll.find(filter).toArray();
+    const found = new Set(docs.map((d) => d.keyLower));
+    const missing = keys.filter((k) => !found.has(k));
+    if (missing.length > 0) {
+      throw MongoActionError.wrap(`Unknown field keys: ${missing.join(', ')}`, {
+        operation: 'datatypes.field.ensureKeys',
+        dbName,
+        argsPreview: { keys },
+      });
     }
   }
-}
 
-/* -------------------------------------
- * tiny preview helper (log-friendly)
- * ------------------------------------- */
-function summarize(v: unknown): unknown {
-  if (v == null) return v;
-  const t = typeof v;
-  if (t === 'string')
-    return (v as string).length > 120 ? `${(v as string).slice(0, 117)}...` : v;
-  if (t === 'number' || t === 'boolean') return v;
-  if (Array.isArray(v)) return `[array(${v.length})]`;
-  if (t === 'object') return '[object]';
-  return `[${t}]`;
+  private async ensurePerTypeCollectionAndUniqueIndexes(
+    db: Db,
+    doc: DataTypeDoc,
+  ): Promise<void> {
+    const name = collectionNameForDatatype(doc.key);
+    const existing = await db.listCollections({ name }).toArray();
+    if (!existing.some((c) => c.name === name)) {
+      await db.createCollection(name);
+    }
+    const entity = db.collection(name);
+
+    // Unique indexes for fields
+    for (const f of doc.fields) {
+      if (f.unique === true && f.array !== true) {
+        const idxName = uniqueIndexName(doc.key, f.fieldKey);
+        await entity.createIndex(
+          { [f.fieldKey]: 1 },
+          { unique: true, name: idxName },
+        );
+      }
+    }
+
+    // Additional indexes from spec (best-effort)
+    if (doc.indexes && doc.indexes.length > 0) {
+      for (const spec of doc.indexes) {
+        try {
+          const opts: CreateIndexesOptions | undefined = spec.options as
+            | CreateIndexesOptions
+            | undefined;
+          await entity.createIndex(spec.keys, opts);
+        } catch {
+          /* tolerate index creation hiccups at this stage */
+        }
+      }
+    }
+  }
 }

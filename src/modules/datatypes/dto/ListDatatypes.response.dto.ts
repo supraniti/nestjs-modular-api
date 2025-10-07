@@ -55,3 +55,13 @@ export interface UpdateFieldResponseDto {
 export interface RemoveFieldResponseDto {
   readonly datatype: DataTypeDto;
 }
+
+/** Publish response (Stage 2B). */
+export interface PublishDatatypeResponseDto {
+  readonly datatype: DataTypeDto;
+}
+
+/** Unpublish response (Stage 2B). */
+export interface UnpublishDatatypeResponseDto {
+  readonly datatype: DataTypeDto;
+}
