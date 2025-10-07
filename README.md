@@ -326,3 +326,91 @@ POST /api/fields/create
 
 Maintained by **Yair Levy (@supraniti)**
 Contributions follow the step-by-step modular protocol described above.
+
+────────────────────────────────────────────────────────
+Added Module: Datatypes
+────────────────────────────────────────────────────────
+Date: 2025-10-07
+Description: Generic, DB-driven entity type definitions. Stage 2A implements “draft” datatypes with composition management (add/update/remove fields) and storage mode selection. No publish lifecycle yet (planned for Stage 2B).
+
+Scope
+• HTTP-exposed under /api/datatypes/\*
+• Backed by the native Mongo driver via our internal MongodbModule
+• Composes from canonical Fields (keys must exist in /api/fields)
+• Drafts only in this stage; composition changes allowed only for drafts
+
+Storage Modes (Stage 2A)
+• single — placeholder for future unified “data” collection (indexes deferred to Stage 3)
+• perType — creates a backing collection per datatype: data\_<key>
+– Automatically creates/drops unique indexes for fields with { unique: true, array: false }
+
+Composition Rules (Stage 2A)
+• Field key must be kebab-case
+• A field cannot be both unique and array
+• Referenced field keys must exist in the Fields collection (seeded or custom)
+
+Routes
+• GET /api/datatypes/list
+→ Returns an array of datatype definitions (drafts included)
+• GET /api/datatypes/get?key=<kebab>
+→ Returns one datatype or null
+• POST /api/datatypes/create
+Body: { key, label, storage?: { mode: 'single'|'perType' }, fields?: [ { fieldKey, required, array, unique?, constraints?, order? } ], indexes?: [{ keys, options? }] }
+→ Creates a draft definition; for perType ensures backing collection and unique indexes
+• POST /api/datatypes/add-field
+Body: { key, field: { fieldKey, required, array, unique?, constraints?, order? } }
+• POST /api/datatypes/update-field
+Body: { key, fieldKey, patch: { required?, array?, unique?, constraints?, order? } }
+Note: Renaming fieldKey is not supported in this stage
+• POST /api/datatypes/remove-field
+Body: { key, fieldKey }
+Note: For perType, drops relevant unique index if it exists
+
+Files
+• src/modules/datatypes/datatypes.module.ts
+• src/modules/datatypes/datatypes.controller.ts
+• src/modules/datatypes/datatypes.service.ts
+• src/modules/datatypes/internal/index.ts (shared types & helpers)
+• src/modules/datatypes/dto/
+– ListDatatypes.request.dto.ts
+– GetDatatype.request.dto.ts
+– CreateDatatype.request.dto.ts
+– AddField.request.dto.ts
+– UpdateField.request.dto.ts
+– RemoveField.request.dto.ts
+– ListDatatypes.response.dto.ts (canonical wire DTOs)
+– type-only re-exports: GetDatatype.response.dto.ts, CreateDatatype.response.dto.ts, AddField.response.dto.ts, UpdateField.response.dto.ts, RemoveField.response.dto.ts
+• Unit tests (CI-safe):
+– src/modules/datatypes/tests/datatypes.service.spec.ts (typed in-memory DB & collection)
+– src/modules/datatypes/tests/datatypes.controller.spec.ts
+• E2E (local, gated):
+– test/modules/datatypes.e2e-spec.ts (skips when CI=1)
+
+Environment & Gating
+• Requires local Mongo infra (MONGO_AUTO_START=1 default locally)
+• E2E runs only locally; CI skips via describe.skip when CI=1
+• Fields seeds must exist (Fields bootstrap runs locally; can be disabled with FIELDS_BOOTSTRAP=0)
+
+Quick Examples
+Create (perType):
+POST /api/datatypes/create
+{
+"key": "article",
+"label": "Article",
+"storage": { "mode": "perType" },
+"fields": [
+{ "fieldKey": "string", "required": true, "array": false, "unique": true, "order": 0 }
+]
+}
+
+Add field:
+POST /api/datatypes/add-field
+{ "key": "article", "field": { "fieldKey": "number", "required": false, "array": false, "unique": false } }
+
+Update field (toggle unique):
+POST /api/datatypes/update-field
+{ "key": "article", "fieldKey": "number", "patch": { "unique": true } }
+
+Remove field:
+POST /api/datatypes/remove-field
+{ "key": "article", "fieldKey": "string" }
