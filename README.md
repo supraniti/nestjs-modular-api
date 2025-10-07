@@ -1,558 +1,237 @@
 # NestJS Modular API
 
-A fully typed, modular NestJS backend exposing a single \`/api\` prefix.
-Focus: strict typing, modular growth, clean CI, and Windows-friendly dev.
+A strongly typed, task-friendly NestJS backend scaffolded for rapid module delivery.
+This README doubles as the onboarding prompt for automation agents: follow it to
+spin up the environment, understand the architecture, and ship new features safely.
+
+---
+
+## 📌 TL;DR (Agents Start Here)
+
+1. **Install deps:** `pnpm install`
+2. **Run quality gates (CI parity):**
+   ```bash
+   pnpm lint
+   pnpm build
+   pnpm test
+   pnpm run test:e2e   # optional locally; gated in CI
+   ```
+3. **Launch API for manual testing:** `pnpm start:dev` → http://localhost:3000/api/health
+4. **Update docs:** Any feature work must append to this README and relevant module docs.
+5. **When in doubt:** prefer strict typing, thin controllers, and deterministic tests.
 
 ---
 
 ## Table of Contents
 
-- [Project Overview](#project-overview)
-- [Current State](#current-state)
-- [Environment](#environment)
-- [Project Structure](#project-structure)
-- [Development Workflow](#development-workflow)
-- [Commands](#commands)
-- [CI Pipeline](#ci-pipeline)
-- [Modules Implemented](#modules-implemented)
-- [Health (HTTP)](#health-http)
-- [Docker (Internal Only)](#docker-internal-only)
-- [Mongo Infra (Local Bootstrap)](#mongo-infra-local-bootstrap)
-- [MongoDB Module (Internal)](#mongodb-module-internal)
-- [Fields Module (HTTP)](#fields-module-http)
-- [Notes & Next Steps](#notes--next-steps)
-- [Author](#author)
+- [Platform Snapshot](#platform-snapshot)
+- [Repository Map](#repository-map)
+- [Runtime & Tooling](#runtime--tooling)
+- [Configuration & Environment](#configuration--environment)
+- [Key NPM Scripts](#key-npm-scripts)
+- [Architecture Overview](#architecture-overview)
+- [Module & Endpoint Catalog](#module--endpoint-catalog)
+- [Testing & Quality Strategy](#testing--quality-strategy)
+- [Development Playbook](#development-playbook)
+- [Mongo & Docker Infrastructure](#mongo--docker-infrastructure)
+- [CI Pipeline Expectations](#ci-pipeline-expectations)
+- [Appendix: DTO/Domain Guidelines](#appendix-dtodomain-guidelines)
 
 ---
 
-## Project Overview
+## Platform Snapshot
 
-Each module exposes one or more actions under \`/api/:module/:action\`.
-Actions may be immediate or long-running (with polling). Modules can also
-call each other internally via typed service APIs.
-
-**Design principles**
-
-- Strict typing everywhere (no \`any\` / \`unknown\` escapes).
-- Shared logic in \`src/lib/_\`, infra in \`src/infra/_\`.
-- Controllers thin; Services own business logic.
-- DTOs validate inputs (\`class-validator\`) and return **typed** responses.
-- E2E that touch Docker/Mongo are **gated** and skipped on CI by default.
-
----
-
-## Current State
-
-- \`/api\` global prefix & validation pipe configured.
-- \`/api/health\` implemented and tested.
-- Config: \`.env\`, \`.env.example\`, \`.env.test\` via \`@nestjs/config\`.
-- Shared utilities in \`src/lib/\`:
-- \`utils/isDefined.ts\`
-- \`types/json.ts\`
-- \`errors/AppError.ts\`
-- Path alias: \`@lib/\_\`.
-- ESLint + Prettier clean.
-- GitHub Actions: lint → build → unit → e2e; heavy e2e gated (see CI).
+| Area            | Details |
+| --------------- | ------- |
+| Runtime         | Node.js 20.x
+| Framework       | NestJS 11.x (REST controllers with DTO validation)
+| Package manager | pnpm (workspace locked by `pnpm-lock.yaml`)
+| Language        | TypeScript (strict mode)
+| Lint/Format     | ESLint 9 + Prettier 3 (see `eslint.config.mjs`)
+| Testing         | Jest 30 (unit + e2e suites)
+| Data            | MongoDB (via `mongodb` driver; Docker bootstrap helpers)
+| Container       | Docker integration through `dockerode`
 
 ---
 
-## Environment
+## Repository Map
 
-| Tool            | Version / Notes                      |
-| --------------- | ------------------------------------ |
-| Node.js         | 20.x                                 |
-| Package Manager | pnpm                                 |
-| Framework       | NestJS 10.x                          |
-| Testing         | Jest (unit + e2e)                    |
-| CI              | GitHub Actions                       |
-| Linting         | ESLint + Prettier                    |
-| OS              | Windows / PowerShell (LF normalized) |
+```
+.
+├─ src/
+│  ├─ main.ts                 # Application entry point (global prefix + pipes)
+│  ├─ app.module.ts           # Root module wiring feature modules
+│  ├─ health.controller.ts    # Legacy simple health endpoint (pre-modular)
+│  ├─ lib/                    # Shared helpers (errors, utils, types)
+│  ├─ infra/                  # Infrastructure helpers (e.g., Mongo bootstrap)
+│  └─ modules/                # Feature modules (HTTP + internal services)
+│     ├─ health/              # /api/health status endpoint
+│     ├─ fields/              # Field definition registry (CRUD)
+│     ├─ datatypes/           # Datatype schema registry & lifecycle
+│     ├─ docker/              # Internal Docker client abstractions
+│     └─ mongodb/             # Internal MongoDB bridge + collections
+├─ test/
+│  ├─ helpers/                # Shared e2e utilities (Docker, Mongo spin-up)
+│  └─ modules/                # Module-focused e2e suites (Mongo gated)
+├─ .env*, .env.example        # Runtime configuration templates
+├─ eslint.config.mjs          # Centralized ESLint configuration
+├─ nest-cli.json, tsconfig.json
+└─ package.json               # Scripts & dependency manifest
+```
 
----
-
-## Project Structure
-
-\`\`\`
-src/
-├─ app.controller.ts
-├─ app.service.ts
-├─ app.module.ts
-├─ main.ts
-├─ lib/
-│ ├─ utils/isDefined.ts
-│ ├─ types/json.ts
-│ ├─ errors/AppError.ts
-│ └─ index.ts
-├─ infra/
-│ └─ mongo/ # local bootstrap (Docker-managed Mongo)
-└─ modules/
-├─ health/ # HTTP health endpoints
-├─ docker/ # internal Docker client/service
-├─ mongodb/ # internal thin MongoDB bridge
-└─ fields/ # HTTP: field registry (Stage 1)
-test/
-├─ app.e2e-spec.ts
-├─ modules/
-│ ├─ health.e2e-spec.ts
-│ ├─ docker.e2e-spec.ts
-│ └─ fields.e2e-spec.ts
-└─ helpers/
-└─ docker.ts
-\`\`\`
+Use this structure when adding new modules—mirror existing folder patterns and
+co-locate tests next to implementation when feasible.
 
 ---
 
-## Development Workflow
+## Runtime & Tooling
 
-We grow the API one module at a time:
-
-1. **Scaffold** module (\`src/modules/<name>\`): controller, service, dto, tests.
-2. Implement **service** (strict, reusable API), then controller (thin).
-3. Add **unit tests** next to code; **e2e** under \`test/modules/\`.
-4. Run locally:
-   \`\`\`bash
-   pnpm run lint
-   pnpm run build
-   pnpm test
-   pnpm run test:e2e
-   \`\`\`
-5. Commit & push — CI must be fully green.
-6. **README update** after each module (this file).
+- **Nest CLI** is available through `pnpm nest <command>` for scaffolding, though
+  manual file creation keeps imports and barrel files tidy.
+- **TypeScript path aliases** live in `tsconfig.json` (e.g., `@lib/*`). Leverage
+  them instead of relative imports when referencing shared utilities.
+- **Validation**: All incoming DTOs must use `class-validator` decorators and
+  rely on the global `ValidationPipe` configured in `main.ts`.
 
 ---
 
-## Commands
+## Configuration & Environment
 
-\`\`\`bash
-pnpm run lint
-pnpm run format:check
-pnpm run build
-pnpm test
-pnpm run test:e2e
-\`\`\`
+1. Copy `.env.example` → `.env` and adjust Mongo/Docker variables as needed.
+2. `.env.test` seeds deterministic values for Jest.
+3. Important variables:
+   - `PORT` (default 3000)
+   - `MONGO_URL`, `MONGO_DB`, `MONGO_AUTO_START` (infra bootstrap)
+   - Docker auth variables if the Docker module needs registry access
+4. Never commit secrets—use `.env.local` or CI secrets for sensitive data.
 
----
-
-## CI Pipeline
-
-Every push triggers:
-
-1. **Install deps** (pnpm)
-2. **Lint**
-3. **Build**
-4. **Unit tests**
-5. **E2E tests**
-
-Defaults:
-
-- \`DOCKER_E2E=0\` on CI to skip Docker-dependent specs.
-- Mongo Infra auto-bootstrap is skipped on CI; local dev can enable it.
+Environment config is loaded via `@nestjs/config`; inject `ConfigService` inside
+modules to access typed settings.
 
 ---
 
-## Modules Implemented
+## Key NPM Scripts
 
-### Health (HTTP)
+| Command              | Purpose |
+| -------------------- | ------- |
+| `pnpm lint`          | ESLint with auto-fix (CI runs without `--fix`)
+| `pnpm build`         | `nest build` → emits compiled output to `dist/`
+| `pnpm start`         | Production start (compiled JS)
+| `pnpm start:dev`     | Watch mode with hot reload
+| `pnpm test`          | Jest unit/integration suites
+| `pnpm test:e2e`      | E2E tests (expects Mongo/Docker; gated in CI)
+| `pnpm format`        | Prettier write across TypeScript/JSON/MD
+| `pnpm format:check`  | Formatting verification only
 
-**Date:** 2025-10-06
-**Description:** Basic liveness & environment endpoints.
-
-**Routes**
-
-- \`GET /api/health/ping\` → \`{ ok, timestamp, epochMs, uptimeSec }\`
-- \`GET /api/health/info\` → \`{ status, timestamp, uptimeSec, pid, node, env, version }\`
-
-**Files**
-
-- \`src/modules/health/health.module.ts\`
-- \`src/modules/health/health.controller.ts\`
-- \`src/modules/health/health.service.ts\`
-- \`src/modules/health/dto/Ping.response.dto.ts\`
-- \`src/modules/health/dto/Info.response.dto.ts\`
-- \`src/modules/health/tests/health.controller.spec.ts\`
-- \`src/modules/health/tests/health.service.spec.ts\`
-- \`test/modules/health.e2e-spec.ts\`
-
-**Status:** ✅ Green in CI & local.
+Always run at least `lint`, `build`, and `test` before submitting work.
 
 ---
 
-### Docker (Internal Only)
+## Architecture Overview
 
-**Summary:** Internal module to manage containers via **dockerode**. No HTTP.
-All managed containers are labeled \`com.modular-api.managed=true\` and mount
-persistent host folders under \`ApplicationData/containers/<name>\` → container \`/data\`.
-
-**Capabilities**
-
-- \`runContainer(options)\`
-- \`getState(name)\`
-- \`stop(name)\`, \`restart(name)\`, \`remove(name)\`
-
-**Persistence**
-
-- Host: \`<repo-root>/ApplicationData/containers/<name>\`
-- Container: \`/data\`
-
-**Testing**
-
-- Real Docker e2e gated by \`DOCKER_E2E=1\` (default off, CI off).
-- Unit tests under \`src/modules/docker/tests/\_\`.
-
-**Deps**
-
-- \`dockerode\` (+ \`@types/dockerode\`)
+- **Modular by design**: each domain lives inside `src/modules/<name>` with its
+  own controller(s), service(s), DTOs, and internal helpers.
+- **Controllers stay thin**: translate DTOs ↔ domain models, delegate to services.
+- **Services own business logic**: enforce invariants, interact with infra layers.
+- **Infra adapters** (`src/infra`) encapsulate external systems (Mongo, Docker) so
+  services stay testable via mocked interfaces.
+- **Shared utilities** (`src/lib`) provide error types (`AppError`), JSON helpers,
+  and type guards used across modules.
+- **Global API prefix**: `main.ts` sets `/api`—route definitions inside modules
+  append to that prefix (`@Controller('datatypes')` → `/api/datatypes/*`).
 
 ---
 
-### Mongo Infra (Local Bootstrap)
+## Module & Endpoint Catalog
 
-**Summary:** On app start (local), ensure a **MongoDB** container exists/runs:
+| Module      | Responsibility | Key Endpoints |
+| ----------- | -------------- | ------------- |
+| **health**  | Basic service status | `GET /api/health` → `{ status: 'ok' }`
+| **fields**  | Canonical field definitions used by datatypes |<ul><li>`GET /api/fields/list`</li><li>`GET /api/fields/get?key=`</li><li>`POST /api/fields/create`</li><li>`POST /api/fields/update`</li><li>`POST /api/fields/delete`</li></ul>
+| **datatypes** | Datatype schema registry with publish lifecycle |<ul><li>`GET /api/datatypes/list`</li><li>`GET /api/datatypes/get?key=`</li><li>`POST /api/datatypes/create` (201)</li><li>`POST /api/datatypes/add-field`</li><li>`POST /api/datatypes/update-field`</li><li>`POST /api/datatypes/remove-field`</li><li>`POST /api/datatypes/publish`</li><li>`POST /api/datatypes/unpublish`</li></ul>
+| **docker** (internal) | Typed wrapper around `dockerode` for other modules; no direct HTTP exposure |
+| **mongodb** (internal) | Mongo client, collections, and bootstrap utilities for modules |
 
-- Name: \`app-mongo\`, Image: \`mongo:7\`
-- Publishes \`127.0.0.1:27017\` (container 27017)
-- Restart: \`unless-stopped\`
-- Persistent data: \`<repo-root>/ApplicationData/containers/app-mongo\` → \`/data\` (Mongo uses \`/data/db\`)
-
-**Env (dev defaults)**
-
-- \`MONGO_AUTO_START=1\` (CI sets 0 implicitly)
-- \`MONGO_IMAGE=mongo:7\`
-- \`MONGO_CONTAINER_NAME=app-mongo\`
-- \`MONGO_HOST=127.0.0.1\`
-- \`MONGO_PORT=27017\`
-- \`MONGO_ROOT_USERNAME=modapi_root\`
-- \`MONGO_ROOT_PASSWORD=modapi_root_dev\`
-
-**Testing:** Unit-only (no Docker on CI). Docker e2e is separate/gated.
+When introducing a new module, follow the same layout: DTOs under `dto/`, domain
+helpers under `internal/`, and tests under `tests/`.
 
 ---
 
-### MongoDB Module (Internal)
+## Testing & Quality Strategy
 
-**Path:** \`src/modules/mongodb\`
-**Purpose:** Thin, strictly-typed bridge to the official MongoDB Node driver. No API re-invention.
+- **Unit tests** live alongside modules (`src/modules/**/tests`). They should run
+  in isolation without Docker/Mongo.
+- **E2E tests** under `test/modules` spin up the Nest app and, when necessary,
+  connect to real Docker/Mongo instances. CI sets guards to skip heavy suites unless
+  explicitly enabled.
+- **Error handling**: domain errors extend `AppError` and controllers translate
+  them into predictable HTTP responses (usually 400).
+- **Linting/Formatting**: keep files clean before committing. CI treats lint or
+  format drift as failures.
+- **Type safety**: avoid `any`/`unknown`; prefer explicit interfaces and DTOs.
 
-**Public API (via DI)**
-
-- \`getDb(dbName?: string): Promise<Db>\`
-- \`getCollection<T = Document>(name: string, dbName?: string): Promise<Collection<T>>\`
-- \`runCommand(command: Record<string, unknown>, dbName?: string): Promise<Record<string, unknown>>\`
-- \`getClient(): Promise<MongoClient>\` (lifecycle managed)
-
-**Internals**
-
-- Lazy singleton client; connects on first use; closes on module destroy.
-- Error wrapping via \`MongoActionError\` (extends \`AppError\`).
-
-**Local Integration Tests**
-
-- \`src/modules/mongodb/tests/mongodb.service.spec.ts\`
-- Connects to live \`app-mongo\`, performs CRUD, cleans up.
-- Auto-skipped on CI.
+Tip: run `pnpm test -- --runTestsByPath <file>` for focused unit debugging.
 
 ---
 
-### Fields Module (HTTP)
+## Development Playbook
 
-**Path:** \`src/modules/fields\`
-**Purpose:** Manage canonical **field types** (Stage 1 of DB-driven schema). Other datatypes will compose these fields.
+1. **Plan** the module/feature: define routes, DTOs, and domain logic.
+2. **Scaffold** files mirroring existing modules (controller, service, DTOs, tests).
+3. **Implement services first** (business logic + integration with infra).
+4. **Add DTO validation** and controller mapping.
+5. **Write unit tests** next to the code; prefer deterministic, fast tests.
+6. **Add/Update e2e tests** if HTTP surface changes.
+7. **Document** the new endpoints here (Module Catalog) and in inline comments.
+8. **Run quality gates** (`lint`, `build`, `test`, optional `test:e2e`).
+9. **Update CHANGELOG/README** for consumer visibility (this file is the source of truth).
 
-**Behavior**
-
-- HTTP under \`/api/fields/\*\`
-- Seeds baseline, **locked** field types on local start:
-- \`string\`, \`number\`, \`boolean\`, \`date\`, \`enum\`
-- Locked fields: **cannot delete**, only \`label\` is mutable
-- Custom fields: create / update / delete
-- Unique index on \`keyLower\` (case-insensitive uniqueness)
-
-**Bootstrap**
-
-- \`FieldsBootstrap\` ensures index + seeds
-- Gated: runs locally; **skips on CI**
-- \`FIELDS_BOOTSTRAP=0\` → disable locally
-
-**Endpoints**
-
-- \`GET /api/fields/list\`
-- \`GET /api/fields/get?key=<kebab-case>\`
-- \`POST /api/fields/create\`
-- \`POST /api/fields/update\`
-- \`POST /api/fields/delete\`
-
-**Kinds (Stage 1)**
-
-- \`string\`: \`{ minLength?, maxLength?, pattern? }\`
-- \`number\`: \`{ min?, max?, integer? }\`
-- \`boolean\`: none
-- \`date\`: none
-- \`enum\`: \`{ values?, caseInsensitive? }\` (seed allows no values)
-
-**Errors**
-
-- Service throws \`MongoActionError\` (extends \`AppError\`)
-- Controller maps any \`AppError\` → **HTTP 400**
-
-**Testing**
-
-- Unit (CI-safe):
-- \`src/modules/fields/tests/fields.service.spec.ts\` (typed in-memory collection)
-- \`src/modules/fields/tests/fields.controller.spec.ts\`
-- E2E (local, real Mongo):
-- \`test/modules/fields.e2e-spec.ts\` (create → get → update → locked delete reject → delete custom)
-
-**Quick Usage**
-\`\`\`http
-POST /api/fields/create
-{
-\"key\": \"summary\",
-\"label\": \"Summary\",
-\"kind\": { \"type\": \"string\", \"constraints\": { \"minLength\": 1, \"maxLength\": 4000 } }"
-}
-\`\`\`
+Automation agents should follow these steps sequentially to minimize merge pain.
 
 ---
 
-## Notes & Next Steps
+## Mongo & Docker Infrastructure
 
-- Proceed to **Datatypes**: compose fields into typed definitions (stored in DB).
-- Enforce richer validation and relationships at the generic layer.
-- (Optional) Add backups via \`mongodump --gzip\` through the Docker module.
+- Local development can auto-start a Mongo container if `MONGO_AUTO_START=1` and
+  Docker is available. See helpers under `src/infra/mongo` and `test/helpers`.
+- Publishing datatypes ensures per-type collections and unique indexes when
+  storage mode is `perType`.
+- Docker module encapsulates container interactions—keep networking credentials
+  inside infra layer, not controllers.
+
+When running e2e tests locally, confirm Docker Desktop (or daemon) is running.
 
 ---
 
-## Author
+## CI Pipeline Expectations
 
-Maintained by **Yair Levy (@supraniti)**
-Contributions follow the step-by-step modular protocol described above.
+GitHub Actions execute, in order:
 
-────────────────────────────────────────────────────────
-Added Module: Datatypes
-────────────────────────────────────────────────────────
-Date: 2025-10-07
-Description: Generic, DB-driven entity type definitions. Stage 2A implements “draft” datatypes with composition management (add/update/remove fields) and storage mode selection. No publish lifecycle yet (planned for Stage 2B).
+1. `pnpm lint`
+2. `pnpm build`
+3. `pnpm test`
+4. Optional gated `pnpm run test:e2e` (skipped unless explicitly enabled)
 
-Scope
-• HTTP-exposed under /api/datatypes/\*
-• Backed by the native Mongo driver via our internal MongodbModule
-• Composes from canonical Fields (keys must exist in /api/fields)
-• Drafts only in this stage; composition changes allowed only for drafts
+A PR is mergeable only when these stages pass. Keep tests deterministic and
+ensure README updates reflect any new behaviors.
 
-Storage Modes (Stage 2A)
-• single — placeholder for future unified “data” collection (indexes deferred to Stage 3)
-• perType — creates a backing collection per datatype: data\_<key>
-– Automatically creates/drops unique indexes for fields with { unique: true, array: false }
+---
 
-Composition Rules (Stage 2A)
-• Field key must be kebab-case
-• A field cannot be both unique and array
-• Referenced field keys must exist in the Fields collection (seeded or custom)
+## Appendix: DTO/Domain Guidelines
 
-Routes
-• GET /api/datatypes/list
-→ Returns an array of datatype definitions (drafts included)
-• GET /api/datatypes/get?key=<kebab>
-→ Returns one datatype or null
-• POST /api/datatypes/create
-Body: { key, label, storage?: { mode: 'single'|'perType' }, fields?: [ { fieldKey, required, array, unique?, constraints?, order? } ], indexes?: [{ keys, options? }] }
-→ Creates a draft definition; for perType ensures backing collection and unique indexes
-• POST /api/datatypes/add-field
-Body: { key, field: { fieldKey, required, array, unique?, constraints?, order? } }
-• POST /api/datatypes/update-field
-Body: { key, fieldKey, patch: { required?, array?, unique?, constraints?, order? } }
-Note: Renaming fieldKey is not supported in this stage
-• POST /api/datatypes/remove-field
-Body: { key, fieldKey }
-Note: For perType, drops relevant unique index if it exists
+- **DTOs** should expose ISO timestamps, stringified ObjectIds, and normalized
+  booleans. Examine `fields` and `datatypes` controllers for patterns.
+- **Domain errors** (`AppError` subclasses) should include user-friendly messages
+  and are surfaced as HTTP 400s.
+- **Index naming**: unique indexes created during datatype publish follow the
+  format `uniq_<typeKeyLower>_<fieldKey>`.
+- **Storage modes**: datatypes support `single` vs `perType`; publishing handles
+  collection creation accordingly.
 
-Files
-• src/modules/datatypes/datatypes.module.ts
-• src/modules/datatypes/datatypes.controller.ts
-• src/modules/datatypes/datatypes.service.ts
-• src/modules/datatypes/internal/index.ts (shared types & helpers)
-• src/modules/datatypes/dto/
-– ListDatatypes.request.dto.ts
-– GetDatatype.request.dto.ts
-– CreateDatatype.request.dto.ts
-– AddField.request.dto.ts
-– UpdateField.request.dto.ts
-– RemoveField.request.dto.ts
-– ListDatatypes.response.dto.ts (canonical wire DTOs)
-– type-only re-exports: GetDatatype.response.dto.ts, CreateDatatype.response.dto.ts, AddField.response.dto.ts, UpdateField.response.dto.ts, RemoveField.response.dto.ts
-• Unit tests (CI-safe):
-– src/modules/datatypes/tests/datatypes.service.spec.ts (typed in-memory DB & collection)
-– src/modules/datatypes/tests/datatypes.controller.spec.ts
-• E2E (local, gated):
-– test/modules/datatypes.e2e-spec.ts (skips when CI=1)
+Use these conventions to ensure new modules integrate smoothly with existing data
+flows and automation.
 
-Environment & Gating
-• Requires local Mongo infra (MONGO_AUTO_START=1 default locally)
-• E2E runs only locally; CI skips via describe.skip when CI=1
-• Fields seeds must exist (Fields bootstrap runs locally; can be disabled with FIELDS_BOOTSTRAP=0)
+---
 
-Quick Examples
-Create (perType):
-POST /api/datatypes/create
-{
-"key": "article",
-"label": "Article",
-"storage": { "mode": "perType" },
-"fields": [
-{ "fieldKey": "string", "required": true, "array": false, "unique": true, "order": 0 }
-]
-}
-
-Add field:
-POST /api/datatypes/add-field
-{ "key": "article", "field": { "fieldKey": "number", "required": false, "array": false, "unique": false } }
-
-Update field (toggle unique):
-POST /api/datatypes/update-field
-{ "key": "article", "fieldKey": "number", "patch": { "unique": true } }
-
-Remove field:
-POST /api/datatypes/remove-field
-{ "key": "article", "fieldKey": "string" }
-
-Datatypes Module (HTTP)
-
-Date: 2025-10-07
-Path: src/modules/datatypes
-Purpose: Manage versioned “data type” definitions stored in MongoDB. A datatype describes fields, storage mode, and (later) indexes/policies/hooks. Other modules will use these definitions to validate and route entity CRUD.
-
-Status model
-
-draft → editable
-
-published → immutable structure (for now), used by runtime entity CRUD
-
-Transitions provided via dedicated endpoints (publish / unpublish)
-
-Storage modes
-
-single — all entity instances live in one shared collection (future entity module will route by discriminator)
-
-perType — each datatype gets its own collection (created on publish if missing)
-
-Collections
-
-datatypes — configuration documents (one per datatype key)
-
-Per-type entity collections (only when storage.mode === 'perType') use:
-data\_<keyLower> (created during publish if absent)
-
-Field rules (Stage 1)
-
-Fields reference canonical keys from the Fields module.
-
-Flags: required, array, unique, order, optional constraints
-
-Invalid combination: unique: true and array: true → rejected
-
-Indexing (Stage 1): for unique: true scalar fields on perType storage, a named unique index is ensured during publish:
-
-Name: uniq*<typeKeyLower>*<fieldKey>
-
-Keys: { [fieldKey]: 1 }
-
-Error model
-
-Domain errors extend AppError and are mapped to HTTP 400 in the controller for predictable client behavior.
-
-Mongo driver errors are wrapped as MongoActionError with contextual operation, trimmed argsPreview, and driverCode (when available).
-
-Routes
-
-GET /api/datatypes/list
-→ { datatypes: DatatypeDto[] }
-
-GET /api/datatypes/get?key=<key>
-→ { datatype: DatatypeDto | null }
-
-POST /api/datatypes/create (201 Created)
-Body: { key, label, storage: { mode: "single" | "perType" }, fields?: FieldInput[], indexes?: IndexSpec[] }
-→ { datatype: DatatypeDto }
-
-POST /api/datatypes/add-field (200 or 201)
-Body: { key, field: FieldInput }
-→ { datatype: DatatypeDto }
-
-POST /api/datatypes/update-field (200)
-Body: { key, fieldKey, patch: Partial<Pick<FieldInput, "required"|"array"|"unique"|"order"|"constraints">> }
-→ { datatype: DatatypeDto }
-
-POST /api/datatypes/remove-field (200)
-Body: { key, fieldKey }
-→ { datatype: DatatypeDto }
-
-POST /api/datatypes/publish (200 or 201)
-Body: { key }
-→ { datatype: DatatypeDto }
-Creates per-type collection and ensures unique indexes for unique scalar fields.
-
-POST /api/datatypes/unpublish (200 or 201)
-Body: { key }
-→ { datatype: DatatypeDto }
-
-DTO notes
-
-DatatypeDto normalizes \_id to hex string and includes: key, label, version, status, storage, fields[], optional indexes[], timestamps, and locked.
-
-Testing
-
-Unit (CI-safe):
-
-src/modules/datatypes/tests/datatypes.service.spec.ts
-
-src/modules/datatypes/tests/datatypes.controller.spec.ts
-
-Publish/Unpublish focused unit tests (real logic, in-memory typed DB stubs):
-
-src/modules/datatypes/tests/datatypes.publish.service.spec.ts
-
-src/modules/datatypes/tests/datatypes.publish.controller.spec.ts
-
-E2E (local, real Mongo):
-
-test/modules/datatypes.e2e-spec.ts
-
-Uses a unique datatype key per run to avoid dup-key collisions.
-
-Expects 201 for create; tolerant of 200/201 for other POSTs (add-field/publish/unpublish).
-
-Skipped in CI; requires Docker Desktop running and MONGO_AUTO_START=1 locally.
-
-Environment
-
-Shares infra config with Mongo bootstrap:
-
-MONGO_AUTO_START=1 (default locally)
-
-MONGO\_\* connection variables as documented in the Mongo Infra section
-
-E2E runs only when not on CI; CI keeps Docker gated off.
-
-Next planned steps
-
-Entities module (internal + HTTP) operating over published datatypes:
-
-Runtime validation (initial minimal checks; Zod/Typsafe generator later)
-
-Routing by storage mode (single vs perType)
-
-Basic computed field hooks (stubs)
-
-RBAC/UBAC and policy stubs (later)
-
-Key files
-
-src/modules/datatypes/datatypes.module.ts
-
-src/modules/datatypes/datatypes.controller.ts
-
-src/modules/datatypes/datatypes.service.ts
-
-src/modules/datatypes/internal/\*
-
-src/modules/datatypes/dto/\*
+Happy building! Keep this README in sync with the codebase—it is the control
+plane for both humans and agents.
