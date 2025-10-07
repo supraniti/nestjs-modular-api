@@ -2,13 +2,14 @@
 
 A strongly typed, task-friendly NestJS backend scaffolded for rapid module delivery.
 This README doubles as the onboarding prompt for automation agents: follow it to
-spin up the environment, understand the architecture, and ship new features safely.
+spin up the environment, understand the architecture, and ship new features safely. A
+companion Vue-based endpoint explorer lives under `apps/frontend` for local-only QA.
 
 ---
 
 ## 📌 TL;DR (Agents Start Here)
 
-1. **Install deps:** `pnpm install`
+1. **Install deps:** `pnpm install` (workspace-aware; pulls backend + frontend dependencies)
 2. **Run quality gates (CI parity):**
    ```bash
    pnpm lint
@@ -70,6 +71,8 @@ spin up the environment, understand the architecture, and ship new features safe
 │     ├─ datatypes/           # Datatype schema registry & lifecycle
 │     ├─ docker/              # Internal Docker client abstractions
 │     └─ mongodb/             # Internal MongoDB bridge + collections
+├─ apps/
+│  └─ frontend/               # Vue 3 + Vite explorer for local endpoint QA
 ├─ test/
 │  ├─ helpers/                # Shared e2e utilities (Docker, Mongo spin-up)
 │  └─ modules/                # Module-focused e2e suites (Mongo gated)
