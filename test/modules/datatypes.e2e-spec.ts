@@ -6,15 +6,22 @@ import request from 'supertest';
 import type { Server } from 'http';
 import type { CreateDatatypeResponseDto } from '../../src/modules/datatypes/dto/CreateDatatype.response.dto';
 
-describe('Datatypes E2E (local, real Mongo)', () => {
+const isCI = process.env.CI === 'true' || process.env.CI === '1';
+const run = isCI ? describe.skip : describe;
+
+run('Datatypes E2E (local, real Mongo)', () => {
   let app: INestApplication;
   let server: Server;
   const uniqueKey = `article_${Date.now()}`;
 
+  // Give local runs more time (container startup, index creation, etc.)
+  jest.setTimeout(30_000);
+
   beforeAll(async () => {
-    // Ensure local infra is allowed for e2e
-    process.env.CI = '0';
-    process.env.MONGO_AUTO_START = '1';
+    // Ensure the mongo bootstrap can run locally
+    if (!process.env.MONGO_AUTO_START) {
+      process.env.MONGO_AUTO_START = '1';
+    }
 
     const modRef = await Test.createTestingModule({
       imports: [AppModule],
@@ -61,7 +68,7 @@ describe('Datatypes E2E (local, real Mongo)', () => {
     const createBody = createRes.body as Readonly<CreateDatatypeResponseDto>;
     expect(createBody.datatype?.key).toBe(uniqueKey);
 
-    // Add new unique scalar field — accept 200 or 201 depending on controller config
+    // Add new unique scalar field — accept 200/201 (implementation detail)
     await request(server)
       .post('/api/datatypes/add-field')
       .send({
