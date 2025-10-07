@@ -152,11 +152,167 @@ Always run at least `lint`, `build`, and `test` before submitting work.
 | **health**  | Basic service status | `GET /api/health` → `{ status: 'ok' }`
 | **fields**  | Canonical field definitions used by datatypes |<ul><li>`GET /api/fields/list`</li><li>`GET /api/fields/get?key=`</li><li>`POST /api/fields/create`</li><li>`POST /api/fields/update`</li><li>`POST /api/fields/delete`</li></ul>
 | **datatypes** | Datatype schema registry with publish lifecycle |<ul><li>`GET /api/datatypes/list`</li><li>`GET /api/datatypes/get?key=`</li><li>`POST /api/datatypes/create` (201)</li><li>`POST /api/datatypes/add-field`</li><li>`POST /api/datatypes/update-field`</li><li>`POST /api/datatypes/remove-field`</li><li>`POST /api/datatypes/publish`</li><li>`POST /api/datatypes/unpublish`</li></ul>
+| **entities** | Runtime CRUD for published datatypes (dynamic per type) |<ul><li>`GET /api/entities/:type/datatype`</li><li>`GET /api/entities/:type/list`</li><li>`GET /api/entities/:type/get?id=`</li><li>`POST /api/entities/:type/create` (201)</li><li>`POST /api/entities/:type/update` (200)</li><li>`POST /api/entities/:type/delete` (200)</li></ul>
+| **discovery** | Explorer manifest for documenting runtime routes and JSON Schemas |<ul><li>`GET /api/discovery/manifest`</li><li>`GET /api/discovery/entities/:type/schema`</li></ul>
 | **docker** (internal) | Typed wrapper around `dockerode` for other modules; no direct HTTP exposure |
 | **mongodb** (internal) | Mongo client, collections, and bootstrap utilities for modules |
 
 When introducing a new module, follow the same layout: DTOs under `dto/`, domain
 helpers under `internal/`, and tests under `tests/`.
+
+---
+
+## Entities & Discovery Deep Dive
+
+The Entities and Discovery modules provide runtime CRUD and self-documenting
+metadata for any Datatype that has been published. All routes inherit the global
+`/api` prefix.
+
+### Base URLs & Module Summary
+
+| Module | Purpose | Key Notes |
+| ------ | ------- | --------- |
+| **Entities** | Typed CRUD routes generated from the live Datatype definition stored in MongoDB. | Only published Datatypes are operable; validation updates instantly as definitions change. |
+| **Discovery** | Programmatic manifest that powers the API Explorer and reflects live Datatype changes. | Manifest bundles static Field/Datatype endpoints plus dynamic per-entity schemas and examples. |
+
+### Core Rules (Entities)
+
+- Only **published** Datatypes are operable. Unknown versus unpublished types
+  return distinct domain errors.
+- Validation derives from the persisted Datatype definition, so schema changes
+  take effect immediately—no rebuild required.
+- Mongo `ObjectId` values are surfaced as `id` hex strings in responses.
+- All domain errors map to HTTP 400 responses using Nest's standard
+  `BadRequestException` payload.
+
+### HTTP Status & Error Mapping
+
+| Status | Trigger | Notes |
+| ------ | ------- | ----- |
+| `200 OK` | list/get/update/delete operations | Updates and deletes explicitly return 200. |
+| `201 Created` | Successful create | |
+| `400 Bad Request` | Domain-level errors | Standard body: `{ statusCode: 400, message, error: "Bad Request" }`. |
+
+| Error | Meaning |
+| ----- | ------- |
+| `UnknownDatatypeError` | Referenced Datatype does not exist. |
+| `UnpublishedDatatypeError` | Datatype exists but has not been published. |
+| `ValidationError` | Payload violates Datatype rules. |
+| `UniqueViolationError` | Unique field constraint breached. |
+| `EntityNotFoundError` | Entity id not present in storage. |
+| `CollectionResolutionError` | Storage resolution failure (rare). |
+
+### Fields Module (Static)
+
+- Endpoints: `GET /api/fields/list`, `GET /api/fields/get?key=`,
+  `POST /api/fields/create`, `POST /api/fields/update`, `POST /api/fields/delete`.
+- Baseline field types include string, number, boolean, date, and enum. Locked
+  seed fields cannot be deleted.
+
+### Datatypes Module (Static)
+
+- Endpoints: `GET /api/datatypes/list`, `GET /api/datatypes/get?key=`,
+  `POST /api/datatypes/create`, `POST /api/datatypes/add-field`,
+  `POST /api/datatypes/update-field`, `POST /api/datatypes/remove-field`,
+  `POST /api/datatypes/publish`, `POST /api/datatypes/unpublish`.
+- Datatype status toggles between `draft` and `published`. Storage mode is either
+  `single` or `perType`; publish-time provisioning handles unique indexes and
+  per-type collections.
+
+### Entities Module (Dynamic per Published Type)
+
+Routes are parameterized by the Datatype key (`:type`).
+
+- `GET /api/entities/:type/datatype` → Returns the published Datatype DTO so
+  clients can build request payloads.
+- `GET /api/entities/:type/list` → Pagination with simple equality filters.
+- `GET /api/entities/:type/get?id=...` → Fetch an entity by 24-char hex `id`.
+- `POST /api/entities/:type/create` → Create entity (201).
+- `POST /api/entities/:type/update` → Update entity (200).
+- `POST /api/entities/:type/delete` → Delete entity (200).
+
+Storage resolution:
+
+- `perType` → Collection `data_<keyLower>`.
+- `single` → Shared `data_entities` collection with discriminator
+  `__type = <keyLower>` (removed from responses).
+
+Filtering, sorting, and pagination:
+
+- Querystring equality filters map directly to field names; repeated keys (e.g.,
+  `k=A&k=B`) become `$in` clauses.
+- Defaults: `page=1`, `pageSize=20` (max `100`), `sortBy=_id`, `sortDir` in
+  `{asc, desc}`.
+
+Validation (derived from Datatype definition):
+
+- Only Datatype-defined keys are evaluated; unknown keys are ignored.
+- Create enforces required fields; update validates only provided keys.
+- Arrays enforce scalar item types.
+- Scalar constraints:
+  - **string** → `minLength`, `maxLength`, `pattern`
+  - **number** → `min`, `max`, `integer: true`
+  - **boolean**
+  - **date** → ISO strings (epoch/Date allowed server-side)
+  - **enum** → `values[]`, optional `caseInsensitive`
+- Unique scalar fields are pre-checked; duplicate key violations raise
+  `UniqueViolationError`.
+
+### Discovery Module (API Explorer Support)
+
+- `GET /api/discovery/manifest` → Returns the Explorer manifest with static
+  module endpoints, per-type routes, JSON Schemas (`create`, `update`,
+  `listQuery`, `entityResponse`), and sample payloads.
+- `GET /api/discovery/entities/:type/schema` → Returns schema + routes for a
+  single type (lazy loading when users switch types).
+
+Manifest (`ExplorerManifest`) structure:
+
+- `version`: `1`
+- `baseUrl`: `"/api"`
+- `openapiUrl`: `"/api/openapi.json"` (placeholder until Swagger is enabled)
+- `generatedAt`: ISO timestamp of manifest creation
+- `modules.fields.endpoints[]`: `{ name, method, path, requestSchemaRef?, responseSchemaRef? }`
+- `modules.datatypes.endpoints[]`: same shape as fields
+- `modules.entities.types[]`: includes `key`, `label`, `storage`, `routes[]`,
+  JSON Schemas, and `examples`
+- `schemas.entityResponse` always includes `id` with 24-hex regex pattern
+
+JSON Schema mapping rules:
+
+- `string` → `{ type: "string", minLength?, maxLength?, pattern? }`
+- `number` → `{ type: "number" }`; integers use `{ type: "integer", multipleOf: 1 }`
+  plus `minimum`/`maximum` when specified.
+- `boolean` → `{ type: "boolean" }`
+- `date` → `{ type: "string", format: "date-time" }`
+- `enum` → `{ type: "string", enum: [...] }` with `x-caseInsensitive` when needed.
+- `array: true` → `{ type: "array", items: <scalar schema> }`
+- `required: true` → Added to `create.required` (updates remain optional).
+- `unique: true` → `{ "x-unique": true }` vendor extension.
+- `listQuery` schemas include pagination/sort properties plus equality filters for
+  each scalar field.
+
+Frontend explorer consumption:
+
+1. Load the manifest on startup to drive navigation and UI generation.
+2. Render Fields/Datatypes endpoints directly (or via OpenAPI when available).
+3. Auto-build create/update forms and list filters from the JSON Schemas; optional
+   client-side validation can mirror backend rules.
+4. Refresh the manifest after Datatype edits/publish actions to capture live
+   schema updates.
+
+Operational notes:
+
+- Entities and Discovery E2E suites require local MongoDB; CI skips them by
+  default.
+- Unit tests cover controller error mapping and schema generation.
+- TypeScript path alias `@lib/*` resolves to `src/lib/*`; `MongodbService`
+  exposes thin driver helpers shared across these modules.
+- `openapiUrl` in the manifest is reserved for future Swagger integration.
+
+Future enhancements: enable Swagger at `/api/openapi.json`, expand filtering,
+introduce RBAC/UBAC, push real-time manifest updates (SSE/WebSocket), and add
+bulk operations with batch validation.
 
 ---
 
