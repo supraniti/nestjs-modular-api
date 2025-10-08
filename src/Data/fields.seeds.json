@@ -3,5 +3,21 @@
   { "key": "number", "label": "Number", "kind": { "type": "number" } },
   { "key": "boolean", "label": "Boolean", "kind": { "type": "boolean" } },
   { "key": "date", "label": "Date", "kind": { "type": "date" } },
-  { "key": "enum", "label": "Enum", "kind": { "type": "enum" } }
+  { "key": "enum", "label": "Enum", "kind": { "type": "enum" } },
+  {
+    "key": "title",
+    "label": "Title",
+    "kind": {
+      "type": "string",
+      "constraints": { "minLength": 1, "maxLength": 160 }
+    }
+  },
+  {
+    "key": "content",
+    "label": "Content",
+    "kind": {
+      "type": "string",
+      "constraints": { "minLength": 1 }
+    }
+  }
 ]

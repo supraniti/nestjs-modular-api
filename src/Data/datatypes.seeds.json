@@ -1,0 +1,24 @@
+[
+  {
+    "key": "post",
+    "label": "Post",
+    "status": "published",
+    "storage": { "mode": "single" },
+    "fields": [
+      {
+        "fieldKey": "title",
+        "required": true,
+        "array": false,
+        "unique": false,
+        "order": 0
+      },
+      {
+        "fieldKey": "content",
+        "required": true,
+        "array": false,
+        "unique": false,
+        "order": 1
+      }
+    ]
+  }
+]
