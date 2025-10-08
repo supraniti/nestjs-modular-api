@@ -49,7 +49,7 @@ export interface RunContainerOptions {
   /** Unique container name. All actions address containers strictly by name. */
   name: string;
 
-  /** Image reference, e.g., "mongo:latest". */
+  /** Image reference, e.g., "mongo:7". */
   image: string;
 
   /** Optional environment variables. */

@@ -1,11 +1,16 @@
+// test/modules/entities.e2e-spec.ts
 import { INestApplication } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
 import request from 'supertest';
+import type { Server } from 'http';
+import { ObjectId } from 'mongodb';
+
 import { EntitiesModule } from '../../src/modules/entities/entities.module';
 import { MongodbModule } from '../../src/modules/mongodb/mongodb.module';
 import { MongodbService } from '../../src/modules/mongodb/mongodb.service';
-import { ObjectId } from 'mongodb';
-import type { Server } from 'http';
+
+import { MongoInfraBootstrap } from '../../src/infra/mongo/mongo.bootstrap';
+import { DockerModule } from '../../src/modules/docker/docker.module';
 
 import type { GetDatatypeResponseDto } from '../../src/modules/entities/dto/GetDatatype.response.dto';
 import type { CreateEntityResponseDto } from '../../src/modules/entities/dto/CreateEntity.response.dto';
@@ -14,9 +19,9 @@ import type { ListEntitiesResponseDto } from '../../src/modules/entities/dto/Lis
 import type { UpdateEntityResponseDto } from '../../src/modules/entities/dto/UpdateEntity.response.dto';
 import type { DeleteEntityResponseDto } from '../../src/modules/entities/dto/DeleteEntity.response.dto';
 
-const isCI = process.env.CI === '1' || process.env.CI === 'true';
+const IS_CI = /^(1|true)$/i.test(process.env.CI ?? '');
 
-(!isCI ? describe : describe.skip)('Entities E2E (perType storage)', () => {
+(IS_CI ? describe.skip : describe)('Entities E2E (perType storage)', () => {
   let app: INestApplication;
   let http: Server;
   let mongo: MongodbService;
@@ -40,21 +45,35 @@ const isCI = process.env.CI === '1' || process.env.CI === 'true';
       { key: 'qty', label: 'Qty', type: 'number' as const },
       { key: 'active', label: 'Active', type: 'boolean' as const },
     ],
-    indexes: [],
+    indexes: [] as Array<unknown>,
     createdAt: new Date(),
     updatedAt: new Date(),
   };
 
-  jest.setTimeout(30_000);
+  // Allow first image pull / container start if needed
+  jest.setTimeout(120_000);
 
   beforeAll(async () => {
+    // Ensure local Mongo is up via bootstrap (skip entirely on CI)
+    if (!IS_CI) {
+      if (!process.env.MONGO_AUTO_START) process.env.MONGO_AUTO_START = '1';
+      const bootstrapMod = await Test.createTestingModule({
+        imports: [DockerModule],
+        providers: [MongoInfraBootstrap],
+      }).compile();
+      await bootstrapMod.get(MongoInfraBootstrap).onApplicationBootstrap();
+      await bootstrapMod.close();
+    }
+
     const moduleRef: TestingModule = await Test.createTestingModule({
       imports: [MongodbModule, EntitiesModule],
     }).compile();
 
     app = moduleRef.createNestApplication();
+    app.setGlobalPrefix('api');
     await app.init();
-    http = app.getHttpServer() as Server;
+
+    http = app.getHttpServer() as unknown as Server;
     mongo = app.get(MongodbService);
 
     const datatypes =

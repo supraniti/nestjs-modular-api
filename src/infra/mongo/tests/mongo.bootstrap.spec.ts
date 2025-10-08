@@ -1,3 +1,6 @@
+// Allow enough time on first-time image pulls & container start in local runs
+jest.setTimeout(120_000);
+
 import { Test, TestingModule } from '@nestjs/testing';
 import { MongoInfraBootstrap } from '../mongo.bootstrap';
 import { DockerService } from '../../../modules/docker/docker.service';
@@ -32,6 +35,8 @@ describe('MongoInfraBootstrap', () => {
     GITHUB_ACTIONS: process.env.GITHUB_ACTIONS,
     NODE_ENV: process.env.NODE_ENV,
     MONGO_AUTO_START: process.env.MONGO_AUTO_START,
+    DOCKER_E2E: process.env.DOCKER_E2E,
+    MONGO_IMAGE_AUTO_PULL: process.env.MONGO_IMAGE_AUTO_PULL,
   };
 
   const runningState: ContainerStateInfo = {
@@ -50,10 +55,14 @@ describe('MongoInfraBootstrap', () => {
     // Ensure bootstrap does NOT think we're in CI:
     process.env.CI = '0';
     process.env.GITHUB_ACTIONS = '0';
-    // Explicitly opt-in to orchestration during unit tests (bootstrap skips by default in Jest)
+    // Explicitly opt-in to orchestration during unit tests
     process.env.MONGO_AUTO_START = '1';
     // Keep NODE_ENV as 'test' (typical in Jest)
     process.env.NODE_ENV = 'test';
+    // DO NOT block image pulls in local runs; let bootstrap pull if needed
+    delete process.env.MONGO_IMAGE_AUTO_PULL;
+    // DOCKER_E2E not required for units; leave as-is
+    delete process.env.DOCKER_E2E;
 
     // Typed spy for the TCP wait helper
     waitSpy = jest.spyOn(TcpWait, 'waitForTcpOpen') as jest.MockedFunction<
@@ -131,6 +140,13 @@ describe('MongoInfraBootstrap', () => {
     if (savedEnv.MONGO_AUTO_START === undefined)
       delete process.env.MONGO_AUTO_START;
     else process.env.MONGO_AUTO_START = savedEnv.MONGO_AUTO_START;
+
+    if (savedEnv.DOCKER_E2E === undefined) delete process.env.DOCKER_E2E;
+    else process.env.DOCKER_E2E = savedEnv.DOCKER_E2E;
+
+    if (savedEnv.MONGO_IMAGE_AUTO_PULL === undefined)
+      delete process.env.MONGO_IMAGE_AUTO_PULL;
+    else process.env.MONGO_IMAGE_AUTO_PULL = savedEnv.MONGO_IMAGE_AUTO_PULL;
   });
 
   it('skips orchestration when MONGO_AUTO_START=0', async () => {

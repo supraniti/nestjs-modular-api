@@ -1,26 +1,32 @@
 // test/modules/datatypes.e2e-spec.ts
 import { Test } from '@nestjs/testing';
 import type { INestApplication } from '@nestjs/common';
-import { AppModule } from '../../src/app.module';
 import request from 'supertest';
 import type { Server } from 'http';
+
+import { AppModule } from '../../src/app.module';
+import { MongoInfraBootstrap } from '../../src/infra/mongo/mongo.bootstrap';
+import { DockerModule } from '../../src/modules/docker/docker.module';
 import type { CreateDatatypeResponseDto } from '../../src/modules/datatypes/dto/CreateDatatype.response.dto';
 
-const isCI = process.env.CI === 'true' || process.env.CI === '1';
-const run = isCI ? describe.skip : describe;
+const IS_CI = /^(1|true)$/i.test(process.env.CI ?? '');
+jest.setTimeout(120_000);
 
-run('Datatypes E2E (local, real Mongo)', () => {
+(IS_CI ? describe.skip : describe)('Datatypes E2E (local, real Mongo)', () => {
   let app: INestApplication;
   let server: Server;
   const uniqueKey = `article_${Date.now()}`;
 
-  // Give local runs more time (container startup, index creation, etc.)
-  jest.setTimeout(30_000);
-
   beforeAll(async () => {
-    // Ensure the mongo bootstrap can run locally
-    if (!process.env.MONGO_AUTO_START) {
-      process.env.MONGO_AUTO_START = '1';
+    // Ensure the mongo bootstrap can run locally (skip on CI)
+    if (!IS_CI) {
+      if (!process.env.MONGO_AUTO_START) process.env.MONGO_AUTO_START = '1';
+      const bootstrapMod = await Test.createTestingModule({
+        imports: [DockerModule],
+        providers: [MongoInfraBootstrap],
+      }).compile();
+      await bootstrapMod.get(MongoInfraBootstrap).onApplicationBootstrap();
+      await bootstrapMod.close();
     }
 
     const modRef = await Test.createTestingModule({
@@ -28,10 +34,10 @@ run('Datatypes E2E (local, real Mongo)', () => {
     }).compile();
 
     app = modRef.createNestApplication();
-    app.setGlobalPrefix('/api');
+    app.setGlobalPrefix('api'); // important: no leading slash
     await app.init();
 
-    server = app.getHttpServer() as Server;
+    server = app.getHttpServer() as unknown as Server;
   });
 
   afterAll(async () => {

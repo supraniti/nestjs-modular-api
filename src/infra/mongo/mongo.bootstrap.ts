@@ -8,6 +8,7 @@ import {
   buildMongoUri,
 } from './mongo.config';
 import { waitForTcpOpen } from '../../lib/net/tcp-wait';
+import Docker from 'dockerode';
 
 /** Treat common “true” strings as true. */
 function isTruthyEnv(value: string | undefined): boolean {
@@ -23,7 +24,6 @@ function isCiEnvironment(env: NodeJS.ProcessEnv = process.env): boolean {
 
 /** Jest/test detection (unit or e2e). */
 function isTestEnvironment(env: NodeJS.ProcessEnv = process.env): boolean {
-  // JEST_WORKER_ID is set by Jest; NODE_ENV often "test" in jest configs
   return (
     isTruthyEnv(env.JEST_WORKER_ID) ||
     (env.NODE_ENV ?? '').toLowerCase() === 'test'
@@ -77,6 +77,9 @@ export class MongoInfraBootstrap implements OnApplicationBootstrap {
     );
 
     try {
+      // Ensure the image exists locally (pull if missing)
+      await this.ensureImageAvailable(cfg.image);
+
       // Ensure container exists and is running
       await this.ensureContainerRunning(cfg.containerName, cfg.image);
 
@@ -111,7 +114,9 @@ export class MongoInfraBootstrap implements OnApplicationBootstrap {
     const colonIdx = auth.indexOf(':');
     if (colonIdx === -1) return uri;
     const maskedAuth = `${auth.slice(0, colonIdx)}:****`;
-    return `${uri.slice(0, schemeIdx + 3)}${maskedAuth}${afterScheme.slice(atIdx)}`;
+    return `${uri.slice(0, schemeIdx + 3)}${maskedAuth}${afterScheme.slice(
+      atIdx,
+    )}`;
   }
 
   private async ensureContainerRunning(
@@ -147,8 +152,54 @@ export class MongoInfraBootstrap implements OnApplicationBootstrap {
         this.logger.log(
           `Mongo container "${containerName}" not found. Creating and starting (${image})...`,
         );
-        await this.docker.runContainer(desired);
-        this.logger.log(`Mongo container "${containerName}" started.`);
+
+        try {
+          await this.docker.runContainer(desired);
+          this.logger.log(`Mongo container "${containerName}" started.`);
+        } catch (err) {
+          if (err instanceof DockerError) {
+            this.logger.warn(
+              `Create failed for "${containerName}" (${err.code ?? 'UNKNOWN'}). Re-inspecting...`,
+            );
+
+            const recheck = await this.docker
+              .getState(containerName)
+              .catch(() => null);
+
+            // If we still can't inspect, surface the original error
+            if (!recheck) {
+              throw err;
+            }
+
+            // If it’s running now, it was just a race — continue
+            if (recheck.status === 'running') {
+              this.logger.log(
+                `Container "${containerName}" appeared after race; continuing (id=${recheck.id}).`,
+              );
+              return;
+            }
+
+            // Otherwise it exists but isn’t running — try restart then recreate
+            this.logger.warn(
+              `Container "${containerName}" exists but is "${recheck.status}". Attempting restart...`,
+            );
+            const restarted = await this.docker.restart(containerName);
+            if (restarted.status === 'running') return;
+
+            this.logger.warn(
+              `Restart did not reach running (status="${restarted.status}"). Removing & re-creating...`,
+            );
+            await this.docker.remove(containerName);
+            await this.docker.runContainer(desired);
+            this.logger.log(
+              `Mongo container "${containerName}" re-created and started.`,
+            );
+            return;
+          }
+          // Not a DockerError — bubble up
+          throw err;
+        }
+
         return;
       }
 
@@ -163,7 +214,9 @@ export class MongoInfraBootstrap implements OnApplicationBootstrap {
         );
         const res = await this.docker.restart(containerName);
         this.logger.log(
-          `Restart result: status="${res.status}"${res.id ? ` id=${res.id}` : ''}`,
+          `Restart result: status="${res.status}"${
+            res.id ? ` id=${res.id}` : ''
+          }`,
         );
 
         // If restart didn't get us to running, we do a safe re-create:
@@ -172,6 +225,7 @@ export class MongoInfraBootstrap implements OnApplicationBootstrap {
             `Restart did not reach "running" (status="${res.status}"). Removing and re-creating container...`,
           );
           await this.docker.remove(containerName);
+          await this.ensureImageAvailable(image);
           await this.docker.runContainer(desired);
           this.logger.log(
             `Mongo container "${containerName}" re-created and started.`,
@@ -180,5 +234,53 @@ export class MongoInfraBootstrap implements OnApplicationBootstrap {
         return;
       }
     }
+  }
+
+  /**
+   * Ensure the Docker image exists locally. If missing and auto-pull is enabled,
+   * pull it once. (On CI we skip all orchestration via shouldSkipOrchestration.)
+   *
+   * Env:
+   * - MONGO_IMAGE_AUTO_PULL (default: "1"): set "0" to skip automatic pulls.
+   */
+  private async ensureImageAvailable(image: string): Promise<void> {
+    const autoPull =
+      process.env.MONGO_IMAGE_AUTO_PULL === undefined
+        ? true
+        : isTruthyEnv(process.env.MONGO_IMAGE_AUTO_PULL);
+
+    const docker = new Docker();
+
+    const exists = await this.imageExists(docker, image);
+    if (exists) return;
+
+    if (!autoPull) {
+      this.logger.warn(
+        `Docker image "${image}" not found locally and MONGO_IMAGE_AUTO_PULL=0; skipping pull.`,
+      );
+      return;
+    }
+
+    this.logger.log(`Pulling Docker image "${image}" ...`);
+    await this.pullImage(docker, image);
+    this.logger.log(`Image "${image}" pulled.`);
+  }
+
+  private async imageExists(docker: Docker, image: string): Promise<boolean> {
+    try {
+      await docker.getImage(image).inspect();
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  private async pullImage(docker: Docker, image: string): Promise<void> {
+    const stream = await docker.pull(image);
+    await new Promise<void>((resolve, reject) => {
+      stream.on('end', resolve);
+      stream.on('error', reject);
+      stream.resume(); // drain
+    });
   }
 }
