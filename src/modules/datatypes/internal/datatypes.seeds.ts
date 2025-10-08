@@ -46,6 +46,21 @@ type DatatypeSeedLiteral = Readonly<{
   >;
 }>;
 
+type NormalizedDatatypeSeedLiteral = Readonly<{
+  key: string;
+  label: string;
+  version: number;
+  status: 'draft' | 'published';
+  storage: Readonly<{ mode: StorageMode }>;
+  fields: ReadonlyArray<DatatypeSeedFieldLiteral>;
+  indexes: ReadonlyArray<
+    Readonly<{
+      keys: Readonly<Record<string, 1 | -1 | 'text'>>;
+      options?: PlainObject;
+    }>
+  >;
+}>;
+
 function assertPlainObject(
   value: unknown,
   context: string,
@@ -55,7 +70,9 @@ function assertPlainObject(
   }
 }
 
-function coerceSeedLiterals(data: unknown): ReadonlyArray<DatatypeSeedLiteral> {
+function coerceSeedLiterals(
+  data: unknown,
+): ReadonlyArray<NormalizedDatatypeSeedLiteral> {
   if (!Array.isArray(data)) {
     throw new Error('Datatype seed JSON must be an array.');
   }
@@ -166,14 +183,16 @@ function coerceSeedLiterals(data: unknown): ReadonlyArray<DatatypeSeedLiteral> {
       label: literal.label,
       version,
       status,
-      storage: { mode: storageMode },
+      storage: Object.freeze({ mode: storageMode }),
       fields,
-      indexes,
+      indexes: Object.freeze(
+        indexes ?? [],
+      ) as NormalizedDatatypeSeedLiteral['indexes'],
     });
   });
 }
 
-const BASE_SEEDS: ReadonlyArray<DatatypeSeedLiteral> = Object.freeze(
+const BASE_SEEDS: ReadonlyArray<NormalizedDatatypeSeedLiteral> = Object.freeze(
   coerceSeedLiterals(rawSeedData),
 );
 
