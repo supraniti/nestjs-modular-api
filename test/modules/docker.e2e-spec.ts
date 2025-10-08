@@ -27,7 +27,7 @@ d('DockerService (e2e)', () => {
   });
 
   const name = 'modapi-mongo-e2e';
-  const image = 'mongo:latest';
+  const image = 'mongo:7';
 
   it('runs mongo container, inspects state, stops and removes it', async () => {
     // Best-effort cleanup if an old container exists

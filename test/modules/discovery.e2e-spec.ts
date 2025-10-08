@@ -7,6 +7,8 @@ import { EntitiesModule } from '../../src/modules/entities/entities.module';
 import { DiscoveryModule } from '../../src/modules/discovery/discovery.module';
 import { MongodbService } from '../../src/modules/mongodb/mongodb.service';
 import { ObjectId } from 'mongodb';
+import { DockerModule } from '../../src/modules/docker/docker.module';
+import { MongoInfraBootstrap } from '../../src/infra/mongo/mongo.bootstrap';
 
 const isCI = process.env.CI === '1' || process.env.CI === 'true';
 
@@ -37,14 +39,27 @@ const isCI = process.env.CI === '1' || process.env.CI === 'true';
     updatedAt: new Date(),
   };
 
-  jest.setTimeout(30_000);
+  jest.setTimeout(60_000);
 
   beforeAll(async () => {
+    // Ensure Mongo is up for local E2E runs
+    if (!isCI) {
+      if (!process.env.MONGO_AUTO_START) process.env.MONGO_AUTO_START = '1';
+      const bootstrapMod: TestingModule = await Test.createTestingModule({
+        imports: [DockerModule],
+        providers: [MongoInfraBootstrap],
+      }).compile();
+
+      await bootstrapMod.get(MongoInfraBootstrap).onApplicationBootstrap();
+      await bootstrapMod.close();
+    }
+
     const moduleRef: TestingModule = await Test.createTestingModule({
       imports: [MongodbModule, EntitiesModule, DiscoveryModule],
     }).compile();
 
     app = moduleRef.createNestApplication();
+    app.setGlobalPrefix('api');
     await app.init();
     http = app.getHttpServer() as Server;
     mongo = app.get(MongodbService);

@@ -4,11 +4,14 @@ import type { Server } from 'http';
 import request from 'supertest';
 
 import { FieldsModule } from '../../src/modules/fields/fields.module';
+import { MongodbModule } from '../../src/modules/mongodb/mongodb.module';
+import { MongoInfraBootstrap } from '../../src/infra/mongo/mongo.bootstrap';
+import { DockerModule } from '../../src/modules/docker/docker.module';
 
 // Skip on CI (CI=true or CI=1)
 const IS_CI = /^(1|true)$/i.test(process.env.CI ?? '');
 
-jest.setTimeout(60_000);
+jest.setTimeout(120_000);
 
 /* -----------------------------
    Typed response shapes (DTOs)
@@ -73,17 +76,25 @@ interface ErrorBody {
   const seedKey = 'string'; // should be present and locked
 
   beforeAll(async () => {
-    // Ensure local infra can auto-start Mongo if needed
-    if (!process.env.MONGO_AUTO_START) {
-      process.env.MONGO_AUTO_START = '1';
+    // Ensure local infra can auto-start Mongo if needed (skipped on CI)
+    if (!IS_CI) {
+      if (!process.env.MONGO_AUTO_START) process.env.MONGO_AUTO_START = '1';
+      const bootstrapMod = await Test.createTestingModule({
+        imports: [DockerModule],
+        providers: [MongoInfraBootstrap],
+      }).compile();
+      await bootstrapMod.get(MongoInfraBootstrap).onApplicationBootstrap();
+      await bootstrapMod.close();
     }
 
     const moduleRef = await Test.createTestingModule({
-      imports: [FieldsModule],
+      // Explicitly include MongodbModule to ensure providers are wired in this scoped app
+      imports: [MongodbModule, FieldsModule],
     }).compile();
 
     app = moduleRef.createNestApplication();
-    // Enable validation similar to a production bootstrap
+    // Match production bootstrap: global prefix + validation
+    app.setGlobalPrefix('api');
     app.useGlobalPipes(
       new ValidationPipe({
         whitelist: true,

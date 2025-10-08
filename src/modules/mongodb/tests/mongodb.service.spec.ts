@@ -3,33 +3,39 @@ import { MongodbModule } from '../mongodb.module';
 import { MongodbService } from '../mongodb.service';
 import type { Collection, Document, Db } from 'mongodb';
 import { closeMongoClient } from '../internal/mongodb.client';
+import { MongoInfraBootstrap } from '../../../infra/mongo/mongo.bootstrap';
+import { DockerModule } from '../../docker/docker.module';
 
 // Detect CI reliably: CI=true or CI=1 (case-insensitive)
 const IS_CI = /^(1|true)$/i.test(process.env.CI ?? '');
 const RUN_LOCAL = !IS_CI;
 
-// Give Mongo a bit more time on first connect/start.
-jest.setTimeout(60_000);
+// Give Mongo ample time for first pull/start on local runs.
+jest.setTimeout(120_000);
 
 // Wrap the entire suite in a conditional describe.
 (RUN_LOCAL ? describe : describe.skip)(
   'MongodbService (local integration)',
   () => {
-    let moduleRef: TestingModule;
+    let moduleRef: TestingModule | undefined;
     let service: MongodbService;
     let db: Db;
     const testDbName = `modapi_test_${Date.now()}`;
     const testCollName = 'spec_collection';
 
     beforeAll(async () => {
-      // Allow infra bootstrap to start Mongo locally if configured (do not force on CI).
-      if (!process.env.MONGO_AUTO_START) {
-        process.env.MONGO_AUTO_START = '1';
-      }
+      // Allow infra bootstrap to start Mongo locally (no effect on CI because infra is gated there).
+      if (!process.env.MONGO_AUTO_START) process.env.MONGO_AUTO_START = '1';
 
       moduleRef = await Test.createTestingModule({
-        imports: [MongodbModule],
+        // IMPORTANT: import DockerModule so DockerService and its DockerClient provider are available
+        imports: [MongodbModule, DockerModule],
+        providers: [MongoInfraBootstrap],
       }).compile();
+
+      // Ensure the local mongo container/image are present and TCP-ready
+      const bootstrap = moduleRef.get(MongoInfraBootstrap);
+      await bootstrap.onApplicationBootstrap();
 
       service = moduleRef.get(MongodbService);
 
@@ -40,7 +46,7 @@ jest.setTimeout(60_000);
     afterAll(async () => {
       try {
         // Clean up the whole test database
-        await db.dropDatabase();
+        await db?.dropDatabase();
       } catch {
         // ignore cleanup errors
       }
@@ -51,7 +57,11 @@ jest.setTimeout(60_000);
         // ignore cleanup errors
       }
 
-      await moduleRef.close();
+      try {
+        await moduleRef?.close();
+      } catch {
+        // ignore cleanup errors
+      }
     });
 
     it('connects and returns a Db handle for the test database', async () => {

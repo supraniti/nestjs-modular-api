@@ -84,7 +84,7 @@ describe('DockerService', () => {
   it('runContainer(): creates and starts container (happy path)', async () => {
     const opts: RunContainerOptions = {
       name: 'modapi-mongo-e2e',
-      image: 'mongo:latest',
+      image: 'mongo:7',
       ports: [{ host: 27017, container: 27017 }],
       env: {
         MONGO_INITDB_ROOT_USERNAME: 'root',
@@ -118,7 +118,7 @@ describe('DockerService', () => {
   it('runContainer(): pulls image and retries when create fails with CREATE_FAILED', async () => {
     const opts: RunContainerOptions = {
       name: 'modapi-mongo-e2e',
-      image: 'mongo:latest',
+      image: 'mongo:7',
     };
 
     client.createContainer
@@ -128,7 +128,7 @@ describe('DockerService', () => {
     const result = await service.runContainer(opts);
 
     expect(client.pullImage).toHaveBeenCalledTimes(1);
-    expect(client.pullImage).toHaveBeenCalledWith('mongo:latest');
+    expect(client.pullImage).toHaveBeenCalledWith('mongo:7');
     expect(client.createContainer).toHaveBeenCalledTimes(2);
     expect(client.inspectContainer).toHaveBeenCalledWith(
       opts.name,
