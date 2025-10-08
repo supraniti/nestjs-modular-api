@@ -1,0 +1,7 @@
+[
+  { "key": "string", "label": "String", "kind": { "type": "string" } },
+  { "key": "number", "label": "Number", "kind": { "type": "number" } },
+  { "key": "boolean", "label": "Boolean", "kind": { "type": "boolean" } },
+  { "key": "date", "label": "Date", "kind": { "type": "date" } },
+  { "key": "enum", "label": "Enum", "kind": { "type": "enum" } }
+]
