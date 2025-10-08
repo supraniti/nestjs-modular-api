@@ -29,7 +29,7 @@ import {
   CollectionResolutionError,
 } from '../../lib/errors/EntitiesError';
 
-@Controller('api/entities/:type')
+@Controller('entities/:type')
 export class EntitiesController {
   constructor(private readonly svc: EntitiesService) {}
 

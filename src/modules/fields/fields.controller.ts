@@ -23,7 +23,7 @@ import { DeleteFieldResponseDto } from './dto/DeleteField.response.dto';
 import type { FieldDoc, FieldKind } from './internal';
 import { AppError } from '../../lib/errors/AppError';
 
-@Controller('api/fields')
+@Controller('fields')
 export class FieldsController {
   constructor(private readonly fields: FieldsService) {}
 

@@ -7,7 +7,7 @@ import {
   UnpublishedDatatypeError,
 } from '../../lib/errors/EntitiesError';
 
-@Controller('api/discovery')
+@Controller('discovery')
 export class DiscoveryController {
   constructor(private readonly svc: DiscoveryService) {}
 
