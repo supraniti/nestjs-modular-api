@@ -1,15 +1,7 @@
 import type { FieldKind } from '@lib/fields';
-import { isKebabCaseKey, normalizeKeyLower } from '@lib/fields';
+import { isFieldKind, isKebabCaseKey, normalizeKeyLower } from '@lib/fields';
 
-import rawSeedData from '../../../Data/fields.seeds.json' assert { type: 'json' };
-
-function isFieldKindLiteral(value: unknown): value is FieldKind {
-  return (
-    value !== null &&
-    typeof value === 'object' &&
-    typeof (value as FieldKind).type === 'string'
-  );
-}
+import rawSeedData from '../../../Data/fields.seeds.json';
 
 /**
  * Shape of a field seed document before insertion.
@@ -51,10 +43,8 @@ function coerceSeedLiterals(data: unknown): ReadonlyArray<FieldSeedLiteral> {
       throw new Error(`Field seed "${key}" is missing a string "label".`);
     }
 
-    if (!isFieldKindLiteral(kind)) {
-      throw new Error(
-        `Field seed "${key}" must declare a "kind" with a "type".`,
-      );
+    if (!isFieldKind(kind)) {
+      throw new Error(`Field seed "${key}" must declare a valid "kind" shape.`);
     }
 
     return Object.freeze({
