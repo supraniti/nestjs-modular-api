@@ -1,17 +1,12 @@
 import { isKebabCaseKey, normalizeKeyLower } from '@lib/fields';
-import type {
-  EntityField,
-  EntityIndexSpec,
-  StorageMode,
-} from '@lib/datatypes';
+import type { EntityField, EntityIndexSpec, StorageMode } from '@lib/datatypes';
 
 import rawSeedData from '../../../Data/datatypes.seeds.json';
 
-export interface DatatypeSeedField
-  extends Pick<
-    EntityField,
-    'fieldKey' | 'required' | 'array' | 'unique' | 'constraints' | 'order'
-  > {}
+export type DatatypeSeedField = Pick<
+  EntityField,
+  'fieldKey' | 'required' | 'array' | 'unique' | 'constraints' | 'order'
+>;
 
 export interface DatatypeSeed {
   readonly key: string;
@@ -51,7 +46,10 @@ type DatatypeSeedLiteral = Readonly<{
   >;
 }>;
 
-function assertPlainObject(value: unknown, context: string): asserts value is PlainObject {
+function assertPlainObject(
+  value: unknown,
+  context: string,
+): asserts value is PlainObject {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
     throw new Error(`${context} must be a plain object.`);
   }
@@ -142,8 +140,7 @@ function coerceSeedLiterals(data: unknown): ReadonlyArray<DatatypeSeedLiteral> {
         });
       });
 
-    const version =
-      literal.version === undefined ? 1 : Number(literal.version);
+    const version = literal.version === undefined ? 1 : Number(literal.version);
     if (!Number.isInteger(version) || version < 1) {
       throw new Error(
         `Datatype seed "${literal.key}" must have an integer version >= 1.`,

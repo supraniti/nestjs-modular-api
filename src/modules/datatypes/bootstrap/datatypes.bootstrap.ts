@@ -1,5 +1,5 @@
 import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
-import type { Collection, Document, WithId } from 'mongodb';
+import type { Collection, Document } from 'mongodb';
 
 import { MongoActionError } from '../../../lib/errors/MongoActionError';
 import { MongodbService } from '../../mongodb/mongodb.service';
@@ -48,7 +48,9 @@ export class DatatypesBootstrap implements OnModuleInit {
     return db.collection<DataTypeDocBase>(DATATYPES_COLLECTION);
   }
 
-  private async ensureIndexes(coll: Collection<DataTypeDocBase>): Promise<void> {
+  private async ensureIndexes(
+    coll: Collection<DataTypeDocBase>,
+  ): Promise<void> {
     await coll.createIndex(
       { keyLower: 1 },
       { unique: true, name: 'uniq_datatypes_keyLower' },
@@ -70,7 +72,7 @@ export class DatatypesBootstrap implements OnModuleInit {
       }
 
       await coll.updateOne(
-        { _id: (existing as WithId<DataTypeDocBase>)._id } as Document,
+        { _id: existing._id } as Document,
         {
           $set: this.buildSeedUpdate(seed, now),
         } as Document,
