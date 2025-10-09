@@ -5,6 +5,7 @@ import {
   HttpStatus,
   Logger,
 } from '@nestjs/common';
+import { BadRequestException } from '@nestjs/common';
 import type { ListEntitiesQueryDto } from './dto/ListEntities.request.dto';
 import type {
   ListEntitiesResponseDto,
@@ -555,6 +556,283 @@ export class EntitiesService {
       return new UniqueViolationError(dt.keyLower, field, undefined);
     }
     return null;
+  }
+
+  /* ------------------------
+     Query API (cursor or page)
+     ------------------------ */
+
+  public async queryEntities(q: {
+    type: string;
+    filter?: string;
+    sort?: string;
+    limit?: number;
+    cursor?: string;
+    page?: number;
+    pageSize?: number;
+  }): Promise<
+    import('./dto/QueryEntities.response.dto').QueryEntitiesResponseDto
+  > {
+    const dt = await this.loadPublishedDatatype(q.type);
+    const col = await this.getEntitiesCollection(dt);
+    const limit = Math.min(Math.max(1, Number(q.limit ?? 50)), 100);
+    const usingPage = q.page != null || q.pageSize != null;
+    if (q.cursor && usingPage) {
+      throw new BadRequestException({
+        ok: false,
+        error: {
+          code: 'BadQuery',
+          message: 'invalid JSON in filter',
+        },
+      });
+    }
+
+    const filter = this.sanitizeFilter(q.filter);
+    const sortFields = this.parseSort(q.sort);
+
+    const findFilter: Filter<Document> = { ...filter } as Filter<Document>;
+    const { discriminator } = this.resolveCollectionInfo(dt);
+    if (discriminator)
+      findFilter[discriminator.field] =
+        discriminator.value as unknown as string;
+
+    const cursorSort: Record<string, 1 | -1> = {};
+    for (const s of sortFields) cursorSort[s.field] = s.dir === 'asc' ? 1 : -1;
+    if (!sortFields.some((s) => s.field === '_id')) cursorSort['_id'] = 1;
+
+    const mongoCursor = col
+      .find(findFilter)
+      .sort(cursorSort)
+      .limit(limit + 1);
+    const docs = await mongoCursor.toArray();
+    const items = docs
+      .slice(0, limit)
+      .map((d) => this.mapDocToEntityItem(dt, d));
+    const hasMore = docs.length > limit;
+    const nextCursor = hasMore
+      ? this.encodeCursor(
+          items[items.length - 1] as Record<string, unknown>,
+          sortFields,
+        )
+      : undefined;
+    return {
+      items,
+      page: { nextCursor, limit, count: items.length, hasMore },
+      meta: {
+        type: dt.key,
+        sort: sortFields.map((s) =>
+          s.dir === 'asc' ? s.field : `-${s.field}`,
+        ),
+      },
+    };
+  }
+
+  private sanitizeFilter(raw: string | undefined): Filter<Document> {
+    if (!raw) return {} as Filter<Document>;
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(raw);
+    } catch {
+      throw new BadRequestException({
+        ok: false,
+        error: {
+          code: 'BadQuery',
+          message: 'invalid JSON in filter',
+        },
+      });
+    }
+    const allowedOps = new Set([
+      '$eq',
+      '$ne',
+      '$in',
+      '$nin',
+      '$gt',
+      '$gte',
+      '$lt',
+      '$lte',
+      '$regex',
+      '$exists',
+    ]);
+    const walk = (node: unknown): unknown => {
+      if (node === null || typeof node !== 'object') return node;
+      const obj = node as Record<string, unknown>;
+      const out: Record<string, unknown> = {};
+      for (const [k, v] of Object.entries(obj)) {
+        if (k.startsWith('$')) {
+          if (!allowedOps.has(k)) continue;
+          if (k === '$regex') {
+            if (typeof v !== 'string') continue;
+            out['$regex'] = v;
+          } else if (k === '$exists') {
+            out['$exists'] = v === true;
+          } else if (k === '$in' || k === '$nin') {
+            out[k] = Array.isArray(v) ? v : [];
+          } else {
+            out[k] = v;
+          }
+        } else {
+          out[k] = walk(v);
+        }
+      }
+      return out;
+    };
+    const result = walk(parsed) as Record<string, unknown>;
+    return result as Filter<Document>;
+  }
+
+  private parseSort(
+    raw?: string,
+  ): Array<{ field: string; dir: 'asc' | 'desc' }> {
+    if (!raw) return [{ field: '_id', dir: 'asc' }];
+    const parts = String(raw)
+      .split(',')
+      .map((s) => s.trim())
+      .filter(Boolean);
+    const out: Array<{ field: string; dir: 'asc' | 'desc' }> = [];
+    for (const p of parts) {
+      if (p.startsWith('-')) out.push({ field: p.slice(1), dir: 'desc' });
+      else out.push({ field: p, dir: 'asc' });
+    }
+    return out.length ? out : [{ field: '_id', dir: 'asc' }];
+  }
+
+  private encodeCursor(
+    item: Record<string, unknown>,
+    sort: Array<{ field: string; dir: 'asc' | 'desc' }>,
+  ): string {
+    const payload = {
+      _id: typeof item['id'] === 'string' ? item['id'] : '',
+      sort: sort.map((s) => (s.dir === 'asc' ? s.field : `-${s.field}`)),
+    };
+    const json = JSON.stringify(payload);
+    return Buffer.from(json).toString('base64url');
+  }
+  private decodeCursor(
+    cur: string,
+  ): { _id?: string; sort?: string[] } | undefined {
+    try {
+      const json = Buffer.from(String(cur), 'base64url').toString('utf8');
+      const obj = JSON.parse(json) as unknown;
+      if (obj && typeof obj === 'object') {
+        const o = obj as { _id?: unknown; sort?: unknown };
+        const _id = typeof o._id === 'string' ? o._id : undefined;
+        const sort = Array.isArray(o.sort)
+          ? o.sort.filter((s) => typeof s === 'string')
+          : undefined;
+        return { _id, sort };
+      }
+      return undefined;
+    } catch {
+      return undefined;
+    }
+  }
+
+  /* ------------------------
+     Prevalidate API
+     ------------------------ */
+
+  public async prevalidate(
+    req: import('./dto/Prevalidate.request.dto').PrevalidateRequestDto,
+  ): Promise<import('./dto/Prevalidate.response.dto').PrevalidateResponseDto> {
+    const mode = req.mode;
+    const dt = await this.loadPublishedDatatype(req.type);
+    const col = await this.getEntitiesCollection(dt);
+    const out: import('./dto/Prevalidate.response.dto').PrevalidateResponseDto =
+      {
+        ok: true,
+        errors: [],
+        warnings: [],
+        effects: {},
+        meta: { type: dt.key, mode },
+      };
+    if (mode === 'create' || mode === 'update') {
+      const payload = req.payload ?? {};
+      const validation = this.validatePayload(dt, payload, { mode: mode });
+      if (!validation.ok) {
+        out.ok = false;
+        out.errors.push({
+          code: 'VALIDATION_FAILED',
+          message: 'Payload invalid',
+        });
+        return out;
+      }
+      if (req.options?.enforceUnique) {
+        try {
+          await this.ensureUniqueConstraints(
+            dt,
+            col,
+            validation.value,
+            undefined,
+          );
+        } catch (e) {
+          out.ok = false;
+          out.errors.push({ code: 'UNIQUE', message: (e as Error).message });
+        }
+      }
+      return out;
+    }
+    if (mode === 'delete') {
+      const id = req.identity?._id;
+      if (!id || !isHex24(id)) {
+        out.ok = false;
+        out.errors.push({
+          code: 'BadIdentity',
+          message: 'identity._id required',
+        });
+        return out;
+      }
+      await this.refs?.ensureFromDb();
+      const edges = this.refs?.getIncoming(dt.keyLower) ?? [];
+      const db = await this.mongo.getDb();
+      const effects = {
+        delete: { restrictedBy: [] as any[], wouldUnset: [] as any[] },
+      };
+      for (const edge of edges) {
+        const dts = db.collection<Record<string, unknown>>('datatypes');
+        const fromDt = await dts.findOne({
+          keyLower: edge.from,
+        } as Filter<Document>);
+        if (!fromDt) continue;
+        const info = this.resolveCollectionInfoAny(
+          fromDt as Record<string, unknown>,
+        );
+        const c = db.collection<Record<string, unknown>>(info.collection);
+        const hex = id;
+        const baseFilter: Filter<Document> = info.discriminator
+          ? {
+              $or: [
+                { [edge.fieldKey]: new ObjectId(hex) },
+                { [edge.fieldKey]: hex },
+                { [edge.fieldKey]: { $in: [new ObjectId(hex), hex] } },
+              ],
+              [info.discriminator.field]: info.discriminator.value,
+            }
+          : {
+              $or: [
+                { [edge.fieldKey]: new ObjectId(hex) },
+                { [edge.fieldKey]: hex },
+                { [edge.fieldKey]: { $in: [new ObjectId(hex), hex] } },
+              ],
+            };
+        const count = await c.countDocuments(baseFilter, { limit: 1001 });
+        if (edge.onDelete === 'restrict' && count > 0) {
+          effects.delete.restrictedBy.push({
+            type: edge.from,
+            field: edge.fieldKey,
+            count,
+          });
+        } else if (edge.onDelete === 'setNull' && !edge.many && count > 0) {
+          effects.delete.wouldUnset.push({
+            type: edge.from,
+            field: edge.fieldKey,
+            docCount: count,
+          });
+        }
+      }
+      out.effects = effects;
+      return out;
+    }
+    return out;
   }
 
   /* ------------------------
