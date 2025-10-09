@@ -236,7 +236,7 @@ describe('DatatypesBootstrap', () => {
   });
 });
 
-type Harness = {
+export type Harness = {
   bootstrap: DatatypesBootstrap;
   mongo: { getDb: jest.Mock };
   collection: {
@@ -254,7 +254,7 @@ type Harness = {
   };
 };
 
-function createHarness(): Harness {
+export function createHarness(): Harness {
   const collectionMocks = {
     createIndex: jest.fn().mockResolvedValue(undefined),
     findOne: jest.fn(),

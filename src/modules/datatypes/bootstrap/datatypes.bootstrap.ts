@@ -1,3 +1,6 @@
+import { promises as fs } from 'node:fs';
+import * as path from 'node:path';
+
 import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import type { Collection, Document, MongoServerError } from 'mongodb';
 
@@ -11,8 +14,8 @@ import {
   type DatatypeSeed,
   type EntityField,
   type EntityIndexSpec,
-  isDatatypeSeedKey,
 } from '../internal';
+import { loadDatatypeSeedsFromDir, mergeDatatypeSeeds } from '../seed-sources';
 
 interface SeedSyncStats {
   inserted: number;
@@ -40,7 +43,8 @@ export class DatatypesBootstrap implements OnModuleInit {
       const db = await this.mongo.getDb();
       const coll = db.collection<DataTypeDocBase>(DATATYPES_COLLECTION);
       await this.ensureIndexes(coll);
-      const stats = await this.syncSeeds(coll);
+      const seeds = await this.loadSeeds();
+      const stats = await this.syncSeeds(coll, seeds);
       this.logger.log(
         `Datatypes bootstrap complete (inserted ${stats.inserted}, reconciled ${stats.reconciled}).`,
       );
@@ -91,6 +95,41 @@ export class DatatypesBootstrap implements OnModuleInit {
     }
   }
 
+  private async loadSeeds(): Promise<ReadonlyArray<DatatypeSeed>> {
+    const dir = process.env.DATATYPES_SEEDS_DIR;
+    if (!dir) {
+      return DATATYPE_SEEDS;
+    }
+
+    const resolvedDir = path.resolve(dir);
+    try {
+      const stats = await fs.stat(resolvedDir);
+      if (!stats.isDirectory()) {
+        this.logger.warn(
+          `DATATYPES_SEEDS_DIR is not a directory: ${resolvedDir}`,
+        );
+        return DATATYPE_SEEDS;
+      }
+    } catch (err) {
+      const error = err as NodeJS.ErrnoException;
+      if (error?.code !== 'ENOENT') {
+        this.logger.warn(
+          `Failed to access DATATYPES_SEEDS_DIR (${resolvedDir}): ${String(err)}`,
+        );
+      }
+      return DATATYPE_SEEDS;
+    }
+
+    const fsSeeds = await loadDatatypeSeedsFromDir(resolvedDir);
+    this.logger.log(
+      `Loaded ${fsSeeds.length} datatype seeds from FS: ${resolvedDir}`,
+    );
+    if (fsSeeds.length === 0) {
+      return DATATYPE_SEEDS;
+    }
+    return mergeDatatypeSeeds(DATATYPE_SEEDS, fsSeeds);
+  }
+
   private async findDuplicateKeyLowers(
     coll: Collection<DataTypeDocBase>,
   ): Promise<ReadonlyArray<{ keyLower: unknown; keys?: unknown }>> {
@@ -122,12 +161,18 @@ export class DatatypesBootstrap implements OnModuleInit {
 
   private async syncSeeds(
     coll: Collection<DataTypeDocBase>,
+    seeds: ReadonlyArray<DatatypeSeed>,
   ): Promise<SeedSyncStats> {
     const now = new Date();
     let inserted = 0;
     let reconciled = 0;
 
-    for (const seed of DATATYPE_SEEDS) {
+    const seedsByLower = new Map<string, DatatypeSeed>();
+    for (const seed of seeds) {
+      seedsByLower.set(seed.keyLower, seed);
+    }
+
+    for (const seed of seeds) {
       const existing = (await coll.findOne({
         keyLower: seed.keyLower,
       } as Document)) as DataTypeDoc | null;
@@ -163,7 +208,7 @@ export class DatatypesBootstrap implements OnModuleInit {
       const record = doc as Document;
       const keyLower =
         typeof record.keyLower === 'string' ? record.keyLower : undefined;
-      if (!keyLower || isDatatypeSeedKey(keyLower)) continue;
+      if (!keyLower || seedsByLower.has(keyLower)) continue;
       const key = typeof record.key === 'string' ? record.key : keyLower;
       this.logger.warn(
         `Locked datatype not in seed set: "${key}" (left untouched).`,

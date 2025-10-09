@@ -52,8 +52,9 @@ export const DATATYPE_SEEDS: ReadonlyArray<DatatypeSeed> = Object.freeze(
     const seen = new Set<string>();
 
     return rawSeedData.map((entry, index) => {
-      const seed = parseSeedLiteral(entry, index);
-      const keyLower = normalizeKeyLower(seed.key);
+      const context = `Datatype seed at index ${index}`;
+      const seed = parseDatatypeSeedLiteral(entry, context);
+      const keyLower = seed.keyLower;
 
       if (seen.has(keyLower)) {
         throw new Error(
@@ -62,26 +63,22 @@ export const DATATYPE_SEEDS: ReadonlyArray<DatatypeSeed> = Object.freeze(
       }
       seen.add(keyLower);
 
-      return Object.freeze({
-        key: seed.key,
-        keyLower,
-        label: seed.label,
-        version: seed.version,
-        status: seed.status,
-        storage: Object.freeze({ mode: seed.storage.mode }) as {
-          readonly mode: StorageMode;
-        },
-        fields: Object.freeze(seed.fields.map(cloneField)),
-        indexes: Object.freeze(seed.indexes.map(cloneIndex)),
-        locked: true,
-      });
+      return seed;
     });
   })(),
 );
 
+export function parseDatatypeSeedLiteral(
+  entry: unknown,
+  context: string,
+): DatatypeSeed {
+  const parsed = parseSeedLiteral(entry, context);
+  return finalizeDatatypeSeed(parsed);
+}
+
 function parseSeedLiteral(
   entry: unknown,
-  index: number,
+  context: string,
 ): {
   key: string;
   label: string;
@@ -92,48 +89,52 @@ function parseSeedLiteral(
   indexes: ReadonlyArray<EntityIndexSpec>;
 } {
   if (!isPlainObject(entry)) {
-    throw new Error(`Datatype seed at index ${index} must be an object.`);
+    throw new Error(`${context}: must be an object.`);
   }
 
   const literal = entry as DatatypeSeedLiteral;
 
   const rawKey = literal.key;
-  if (typeof rawKey !== 'string' || rawKey.trim().length === 0) {
-    throw new Error(
-      `Datatype seed at index ${index} is missing a string "key".`,
-    );
+  if (typeof rawKey !== 'string') {
+    throw new Error(`${context}: key must be a string.`);
   }
   const key = rawKey.trim();
-  if (!isKebabCaseKey(key))
-    throw new Error(`Datatype seed "${key}" must use kebab-case keys.`);
+  if (key.length === 0) {
+    throw new Error(`${context}: key must be a non-empty string.`);
+  }
+  if (!isKebabCaseKey(key)) {
+    throw new Error(`${context}: key "${key}" must use kebab-case.`);
+  }
 
-  const label = literal.label;
-  if (typeof label !== 'string' || label.trim().length === 0) {
-    throw new Error(`Datatype seed "${key}" is missing a string "label".`);
+  const keyContext = `${context} "${key}"`;
+
+  const rawLabel = literal.label;
+  if (typeof rawLabel !== 'string') {
+    throw new Error(`${keyContext}: label must be a string.`);
+  }
+  const label = rawLabel.trim();
+  if (label.length === 0) {
+    throw new Error(`${keyContext}: label must be a non-empty string.`);
   }
 
   const version = literal.version === undefined ? 1 : Number(literal.version);
   if (!Number.isInteger(version) || version <= 0) {
-    throw new Error(
-      `Datatype seed "${key}" must declare a positive integer version.`,
-    );
+    throw new Error(`${keyContext}: version must be a positive integer.`);
   }
 
   const rawStatus = literal.status ?? 'draft';
   if (rawStatus !== 'draft' && rawStatus !== 'published') {
-    throw new Error(
-      `Datatype seed "${key}" must declare status "draft" or "published".`,
-    );
+    throw new Error(`${keyContext}: status must be "draft" or "published".`);
   }
   const status = rawStatus;
 
-  const storageMode = parseStorageMode(literal.storage, key);
-  const fields = parseFields(literal.fields, key);
-  const indexes = parseIndexes(literal.indexes, key);
+  const storageMode = parseStorageMode(literal.storage, keyContext);
+  const fields = parseFields(literal.fields, keyContext);
+  const indexes = parseIndexes(literal.indexes, keyContext);
 
   return {
     key,
-    label: label.trim(),
+    label,
     version,
     status,
     storage: { mode: storageMode },
@@ -142,75 +143,70 @@ function parseSeedLiteral(
   };
 }
 
-function parseStorageMode(value: unknown, key: string): StorageMode {
+function parseStorageMode(value: unknown, context: string): StorageMode {
   if (value === undefined) return 'single';
-  if (!isPlainObject(value))
-    throw new Error(`Datatype seed "${key}" storage must be an object.`);
-  const mode = value.mode;
+  if (!isPlainObject(value)) {
+    throw new Error(`${context}: storage must be an object.`);
+  }
+  const mode = (value as { mode?: unknown }).mode;
   if (typeof mode !== 'string' || !isStorageMode(mode)) {
-    throw new Error(
-      `Datatype seed "${key}" has invalid storage.mode "${String(mode)}".`,
-    );
+    throw new Error(`${context}: storage.mode "${String(mode)}" is invalid.`);
   }
   return mode;
 }
 
-function parseFields(value: unknown, key: string): ReadonlyArray<EntityField> {
+function parseFields(
+  value: unknown,
+  context: string,
+): ReadonlyArray<EntityField> {
   if (!Array.isArray(value)) {
-    throw new Error(`Datatype seed "${key}" must declare a "fields" array.`);
+    throw new Error(`${context}: fields must be an array.`);
   }
-  return value.map((field, index) => parseField(field, key, index));
+  return value.map((field, index) =>
+    parseField(field, `${context} field[${index}]`),
+  );
 }
 
-function parseField(field: unknown, key: string, index: number): EntityField {
+function parseField(field: unknown, context: string): EntityField {
   if (!isPlainObject(field)) {
-    throw new Error(
-      `Datatype seed "${key}" field at index ${index} must be an object.`,
-    );
+    throw new Error(`${context}: must be an object.`);
   }
 
   const literal = field as DatatypeSeedFieldLiteral;
   const rawFieldKey = literal.fieldKey;
-  if (typeof rawFieldKey !== 'string' || rawFieldKey.trim().length === 0) {
-    throw new Error(
-      `Datatype seed "${key}" field at index ${index} is missing a string "fieldKey".`,
-    );
+  if (typeof rawFieldKey !== 'string') {
+    throw new Error(`${context}: fieldKey must be a string.`);
   }
   const fieldKey = rawFieldKey.trim();
-  if (!isKebabCaseKey(fieldKey)) {
-    throw new Error(
-      `Datatype seed "${key}" field "${fieldKey}" must use kebab-case fieldKey.`,
-    );
+  if (fieldKey.length === 0) {
+    throw new Error(`${context}: fieldKey must be a non-empty string.`);
   }
+  if (!isKebabCaseKey(fieldKey)) {
+    throw new Error(`${context}: fieldKey must be kebab-case.`);
+  }
+
+  const fieldContext = `${context} "${fieldKey}"`;
 
   const required =
     literal.required === undefined
       ? false
       : (literal.required as unknown as boolean);
   if (typeof required !== 'boolean') {
-    throw new Error(
-      `Datatype seed "${key}" field "${fieldKey}" must declare boolean "required".`,
-    );
+    throw new Error(`${fieldContext}: required must be boolean.`);
   }
 
   const array =
     literal.array === undefined ? false : (literal.array as unknown as boolean);
   if (typeof array !== 'boolean') {
-    throw new Error(
-      `Datatype seed "${key}" field "${fieldKey}" must declare boolean "array".`,
-    );
+    throw new Error(`${fieldContext}: array must be boolean.`);
   }
 
   if (literal.unique !== undefined && typeof literal.unique !== 'boolean') {
-    throw new Error(
-      `Datatype seed "${key}" field "${fieldKey}" unique must be boolean.`,
-    );
+    throw new Error(`${fieldContext}: unique must be boolean when provided.`);
   }
 
   if (literal.order !== undefined && typeof literal.order !== 'number') {
-    throw new Error(
-      `Datatype seed "${key}" field "${fieldKey}" order must be number.`,
-    );
+    throw new Error(`${fieldContext}: order must be a number when provided.`);
   }
 
   if (
@@ -218,7 +214,7 @@ function parseField(field: unknown, key: string, index: number): EntityField {
     !isPlainObject(literal.constraints)
   ) {
     throw new Error(
-      `Datatype seed "${key}" field "${fieldKey}" constraints must be an object when provided.`,
+      `${fieldContext}: constraints must be an object when provided.`,
     );
   }
 
@@ -238,48 +234,36 @@ function parseField(field: unknown, key: string, index: number): EntityField {
 
 function parseIndexes(
   value: unknown,
-  key: string,
+  context: string,
 ): ReadonlyArray<EntityIndexSpec> {
   if (value === undefined) return [];
   if (!Array.isArray(value)) {
-    throw new Error(
-      `Datatype seed "${key}" indexes must be an array when provided.`,
-    );
+    throw new Error(`${context}: indexes must be an array when provided.`);
   }
-  return value.map((idx, index) => parseIndex(idx, key, index));
+  return value.map((idx, index) =>
+    parseIndex(idx, `${context} index[${index}]`),
+  );
 }
 
-function parseIndex(
-  value: unknown,
-  key: string,
-  index: number,
-): EntityIndexSpec {
+function parseIndex(value: unknown, context: string): EntityIndexSpec {
   if (!isPlainObject(value)) {
-    throw new Error(
-      `Datatype seed "${key}" index at index ${index} must be an object.`,
-    );
+    throw new Error(`${context}: must be an object.`);
   }
 
   const literal = value as IndexLiteral;
   if (!isPlainObject(literal.keys)) {
-    throw new Error(
-      `Datatype seed "${key}" index at index ${index} must declare keys.`,
-    );
+    throw new Error(`${context}: keys must be an object.`);
   }
 
   const keysEntries = Object.entries(literal.keys);
   if (keysEntries.length === 0) {
-    throw new Error(
-      `Datatype seed "${key}" index at index ${index} must declare at least one key.`,
-    );
+    throw new Error(`${context}: must declare at least one key.`);
   }
 
   const keys: Record<string, 1 | -1 | 'text'> = {};
   for (const [k, v] of keysEntries) {
     if (v !== 1 && v !== -1 && v !== 'text') {
-      throw new Error(
-        `Datatype seed "${key}" index key "${k}" must be 1, -1, or 'text'.`,
-      );
+      throw new Error(`${context}: key "${k}" must be 1, -1, or 'text'.`);
     }
     keys[k] = v;
   }
@@ -287,11 +271,12 @@ function parseIndex(
   let options: EntityIndexSpec['options'];
   if (literal.options !== undefined) {
     if (!isPlainObject(literal.options)) {
-      throw new Error(
-        `Datatype seed "${key}" index options at index ${index} must be an object.`,
-      );
+      throw new Error(`${context}: options must be an object.`);
     }
-    options = parseIndexOptions(literal.options as IndexOptionsLiteral, key);
+    options = parseIndexOptions(
+      literal.options as IndexOptionsLiteral,
+      context,
+    );
   }
 
   return Object.freeze({
@@ -302,29 +287,23 @@ function parseIndex(
 
 function parseIndexOptions(
   literal: IndexOptionsLiteral,
-  key: string,
+  context: string,
 ): EntityIndexSpec['options'] {
   if (literal.unique !== undefined && typeof literal.unique !== 'boolean') {
-    throw new Error(
-      `Datatype seed "${key}" index option "unique" must be boolean.`,
-    );
+    throw new Error(`${context}: option "unique" must be boolean.`);
   }
   if (literal.name !== undefined && typeof literal.name !== 'string') {
-    throw new Error(
-      `Datatype seed "${key}" index option "name" must be string.`,
-    );
+    throw new Error(`${context}: option "name" must be string.`);
   }
   if (literal.sparse !== undefined && typeof literal.sparse !== 'boolean') {
-    throw new Error(
-      `Datatype seed "${key}" index option "sparse" must be boolean.`,
-    );
+    throw new Error(`${context}: option "sparse" must be boolean.`);
   }
   if (
     literal.partialFilterExpression !== undefined &&
     !isPlainObject(literal.partialFilterExpression)
   ) {
     throw new Error(
-      `Datatype seed "${key}" index option "partialFilterExpression" must be an object.`,
+      `${context}: option "partialFilterExpression" must be an object.`,
     );
   }
 
@@ -350,6 +329,32 @@ function cloneField(field: EntityField): EntityField {
     ...(field.unique !== undefined ? { unique: field.unique } : {}),
     ...(field.constraints ? { constraints: { ...field.constraints } } : {}),
     ...(field.order !== undefined ? { order: field.order } : {}),
+  });
+}
+
+function finalizeDatatypeSeed(parsed: {
+  key: string;
+  label: string;
+  version: number;
+  status: 'draft' | 'published';
+  storage: { readonly mode: StorageMode };
+  fields: ReadonlyArray<EntityField>;
+  indexes: ReadonlyArray<EntityIndexSpec>;
+}): DatatypeSeed {
+  const keyLower = normalizeKeyLower(parsed.key);
+
+  return Object.freeze({
+    key: parsed.key,
+    keyLower,
+    label: parsed.label,
+    version: parsed.version,
+    status: parsed.status,
+    storage: Object.freeze({ mode: parsed.storage.mode }) as {
+      readonly mode: StorageMode;
+    },
+    fields: Object.freeze(parsed.fields.map(cloneField)),
+    indexes: Object.freeze(parsed.indexes.map(cloneIndex)),
+    locked: true,
   });
 }
 

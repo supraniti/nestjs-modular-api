@@ -106,6 +106,7 @@ co-locate tests next to implementation when feasible.
    - `PORT` (default 3000)
    - `MONGO_URL`, `MONGO_DB`, `MONGO_AUTO_START` (infra bootstrap)
    - `DATATYPES_BOOTSTRAP` (default `1` locally) — set to `0`/`false` to skip datatype seed bootstrap; automatically disabled when `CI=1`.
+   - `DATATYPES_SEEDS_DIR` — optional directory path containing filesystem datatype seed files (one JSON per datatype). When set, these seeds augment or override `src/Data/datatypes.seeds.json` during bootstrap.
    - Docker auth variables if the Docker module needs registry access
 4. Never commit secrets—use `.env.local` or CI secrets for sensitive data.
 
