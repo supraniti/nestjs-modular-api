@@ -104,17 +104,12 @@ jest.setTimeout(120_000);
       const res = await request(http)
         .post(`/api/entities/${typeKey}/create`)
         .send({ content: 'Body' })
-        .expect(400);
+        .expect(422);
 
-      const body = res.body as {
-        error: string;
-        message: string;
-        details: ValidationIssue[];
-      };
-      expect(body.error).toBe('ValidationError');
-      expect(body.message).toBe('Validation failed');
-      expect(Array.isArray(body.details)).toBe(true);
-      expect(body.details.some((i) => i.keyword === 'required')).toBe(true);
+      const body = res.body as { code: string; errors: ValidationIssue[] };
+      expect(body.code).toBe('VALIDATION_FAILED');
+      expect(Array.isArray(body.errors)).toBe(true);
+      expect(body.errors.some((i) => i.keyword === 'required')).toBe(true);
     });
 
     let id = '';
@@ -131,16 +126,11 @@ jest.setTimeout(120_000);
       const res = await request(http)
         .post(`/api/entities/${typeKey}/update`)
         .send({ id, changes: { title: 'This is too long' } })
-        .expect(400);
+        .expect(422);
 
-      const body2 = res.body as {
-        error: string;
-        message: string;
-        details: ValidationIssue[];
-      };
-      expect(body2.error).toBe('ValidationError');
-      expect(body2.message).toBe('Validation failed');
-      expect(body2.details.some((i) => i.keyword === 'maxLength')).toBe(true);
+      const body2 = res.body as { code: string; errors: ValidationIssue[] };
+      expect(body2.code).toBe('VALIDATION_FAILED');
+      expect(body2.errors.some((i) => i.keyword === 'maxLength')).toBe(true);
     });
   },
 );

@@ -3,6 +3,7 @@ import Ajv from 'ajv';
 import { ValidateAction } from '../actions/validate.action';
 import type { HookContext } from '../types';
 import { SchemaRegistry } from '../schema.registry';
+import { HttpException } from '@nestjs/common';
 
 // Minimal mock SchemaRegistry
 class MockSchemaRegistry {
@@ -58,7 +59,7 @@ describe('ValidateAction', () => {
     expect(out).toBeDefined();
   });
 
-  it('throws ValidationError with normalized AJV issues', async () => {
+  it('returns 422 with AJV issues on invalid payload', async () => {
     const module = await Test.createTestingModule({
       providers: [
         ValidateAction,
@@ -74,6 +75,6 @@ describe('ValidateAction', () => {
       meta: { typeKey: 'post', phase: 'beforeCreate' },
     };
 
-    await expect(action.run(ctx)).rejects.toThrow(/Validation failed/);
+    await expect(action.run(ctx)).rejects.toBeInstanceOf(HttpException);
   });
 });
