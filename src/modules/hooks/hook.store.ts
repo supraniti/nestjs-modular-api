@@ -28,4 +28,9 @@ export class HookStore {
     }
     return steps;
   }
+
+  /** Expose known type keys registered in the store. */
+  listTypes(): string[] {
+    return Array.from(this.patchesByType.keys());
+  }
 }

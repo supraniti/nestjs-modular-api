@@ -6,6 +6,7 @@ import type { HookAction, HookContext } from '../types';
 import { ValidateAction } from '../actions/validate.action';
 import { EnrichAction } from '../actions/enrich.action';
 import { SchemaRegistry } from '../schema.registry';
+import { NestHookLogger } from '../types';
 
 describe('HookEngine', () => {
   async function makeEngine() {
@@ -16,6 +17,7 @@ describe('HookEngine', () => {
         HookEngine,
         ValidateAction,
         EnrichAction,
+        NestHookLogger,
         {
           provide: SchemaRegistry,
           useValue: {

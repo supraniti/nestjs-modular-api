@@ -73,24 +73,90 @@ export class HookError extends Error {
 
 export interface HookLogger {
   onStepStart?: (info: {
+    rid?: string;
     phase: HookPhase;
     typeKey: string;
     action: string;
   }) => void;
   onStepEnd?: (info: {
+    rid?: string;
     phase: HookPhase;
     typeKey: string;
     action: string;
+    ms: number;
+    ok: boolean;
+    err?: { name: string; code?: string; message: string };
+  }) => void;
+  onPhaseEnd?: (info: {
+    rid?: string;
+    phase: HookPhase;
+    typeKey: string;
+    steps: number;
+    failed: number;
+    ms: number;
   }) => void;
 }
 
 @Injectable()
 export class NestHookLogger implements HookLogger {
   private readonly logger = new Logger('HookEngine');
-  onStepStart(info: { phase: HookPhase; typeKey: string; action: string }) {
-    this.logger.debug(`start ${info.phase}/${info.typeKey}/${info.action}`);
+  onStepStart(info: {
+    rid?: string;
+    phase: HookPhase;
+    typeKey: string;
+    action: string;
+  }) {
+    this.logger.log(
+      JSON.stringify({
+        lvl: 'info',
+        rid: info.rid,
+        typeKey: info.typeKey,
+        phase: info.phase,
+        action: info.action,
+        event: 'step_start',
+      }),
+    );
   }
-  onStepEnd(info: { phase: HookPhase; typeKey: string; action: string }) {
-    this.logger.debug(`end   ${info.phase}/${info.typeKey}/${info.action}`);
+  onStepEnd(info: {
+    rid?: string;
+    phase: HookPhase;
+    typeKey: string;
+    action: string;
+    ms: number;
+    ok: boolean;
+    err?: { name: string; code?: string; message: string };
+  }) {
+    const payload = {
+      rid: info.rid,
+      typeKey: info.typeKey,
+      phase: info.phase,
+      action: info.action,
+      ms: info.ms,
+      ok: info.ok,
+      ...(info.err ? { err: info.err } : {}),
+    };
+    if (info.ok) this.logger.log(JSON.stringify({ lvl: 'info', ...payload }));
+    else this.logger.warn(JSON.stringify({ lvl: 'warn', ...payload }));
+  }
+  onPhaseEnd(info: {
+    rid?: string;
+    phase: HookPhase;
+    typeKey: string;
+    steps: number;
+    failed: number;
+    ms: number;
+  }) {
+    this.logger.log(
+      JSON.stringify({
+        lvl: 'info',
+        rid: info.rid,
+        typeKey: info.typeKey,
+        phase: info.phase,
+        steps: info.steps,
+        failed: info.failed,
+        ms: info.ms,
+        event: 'phase_end',
+      }),
+    );
   }
 }

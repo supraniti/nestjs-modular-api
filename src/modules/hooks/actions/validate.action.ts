@@ -1,7 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import type { HookAction, HookActionId, HookContext } from '../types';
 import { SchemaRegistry } from '../schema.registry';
-import { ValidationError } from '../../../lib/errors/EntitiesError';
+import { ValidationHttpException } from '../../../lib/errors/ValidationHttpException';
 
 @Injectable()
 export class ValidateAction implements HookAction<unknown, unknown> {
@@ -28,16 +28,12 @@ export class ValidateAction implements HookAction<unknown, unknown> {
 
     const ok = validate(payload);
     if (!ok) {
-      const issues = (validate.errors ?? []).map((e) => ({
+      const details = (validate.errors ?? []).map((e) => ({
         path: e.instancePath || '/',
         keyword: e.keyword,
         message: e.message ?? 'validation error',
       }));
-      // Throw domain ValidationError with structured details for controller mapping
-      throw new ValidationError(typeKey, {
-        phase: phase ?? 'unknown',
-        issues,
-      });
+      throw new ValidationHttpException(details);
     }
     return ctx;
   }

@@ -12,12 +12,6 @@ import { HookStore } from '../../src/modules/hooks/hook.store';
 import type { HookActionId } from '../../src/modules/hooks/types';
 
 type ValidationIssue = { path: string; keyword: string; message: string };
-type ValidationResponse = {
-  error: 'ValidationError';
-  typeKey: string;
-  phase: string;
-  issues: ValidationIssue[];
-};
 
 const IS_CI = /^(1|true)$/i.test(process.env.CI ?? '');
 
@@ -104,18 +98,21 @@ const IS_CI = /^(1|true)$/i.test(process.env.CI ?? '');
       }
     });
 
-    it('POST /api/entities/:type/create -> 400 for missing required (title)', async () => {
+    it('POST /api/entities/:type/create -> 400 (standardized) for missing required (title)', async () => {
       const res = await request(http)
         .post(`/api/entities/${typeKey}/create`)
         .send({ content: 'Body' })
         .expect(400);
 
-      const body = res.body as ValidationResponse;
+      const body = res.body as {
+        error: string;
+        message: string;
+        details: ValidationIssue[];
+      };
       expect(body.error).toBe('ValidationError');
-      expect(body.typeKey.toLowerCase()).toBe(typeKeyLower);
-      expect(body.phase).toBe('beforeCreate');
-      expect(Array.isArray(body.issues)).toBe(true);
-      expect(body.issues.some((i) => i.keyword === 'required')).toBe(true);
+      expect(body.message).toBe('Validation failed');
+      expect(Array.isArray(body.details)).toBe(true);
+      expect(body.details.some((i) => i.keyword === 'required')).toBe(true);
     });
 
     let id = '';
@@ -128,16 +125,20 @@ const IS_CI = /^(1|true)$/i.test(process.env.CI ?? '');
       expect(id).toHaveLength(24);
     });
 
-    it('POST /api/entities/:type/update -> 400 for constraint violation (maxLength)', async () => {
+    it('POST /api/entities/:type/update -> 400 (standardized) for constraint violation (maxLength)', async () => {
       const res = await request(http)
         .post(`/api/entities/${typeKey}/update`)
         .send({ id, changes: { title: 'This is too long' } })
         .expect(400);
 
-      const body2 = res.body as ValidationResponse;
+      const body2 = res.body as {
+        error: string;
+        message: string;
+        details: ValidationIssue[];
+      };
       expect(body2.error).toBe('ValidationError');
-      expect(body2.phase).toBe('beforeUpdate');
-      expect(body2.issues.some((i) => i.keyword === 'maxLength')).toBe(true);
+      expect(body2.message).toBe('Validation failed');
+      expect(body2.details.some((i) => i.keyword === 'maxLength')).toBe(true);
     });
   },
 );

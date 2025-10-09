@@ -29,6 +29,8 @@ import { MongodbService } from '../mongodb/mongodb.service';
 import { HookEngine } from '../hooks/hook.engine';
 import type { HookContext } from '../hooks/types';
 import { AppError } from '../../lib/errors/AppError';
+import { HttpException } from '@nestjs/common';
+import { RequestIdService } from '../hooks/request-id.service';
 
 /** Field/constraints shapes (phase 1) */
 type FieldType = 'string' | 'number' | 'boolean' | 'date' | 'enum';
@@ -89,6 +91,7 @@ export class EntitiesService {
   constructor(
     private readonly mongo: MongodbService,
     @Optional() private readonly hooks?: HookEngine,
+    @Optional() private readonly reqId?: RequestIdService,
   ) {}
 
   /* -----------------------------
@@ -270,7 +273,7 @@ export class EntitiesService {
     if (this.hooks) {
       const ctx: HookContext = {
         payload,
-        meta: { typeKey: dt.keyLower },
+        meta: { typeKey: dt.keyLower, reqId: this.reqId?.getId() },
       };
       try {
         await this.hooks.run({
@@ -279,9 +282,10 @@ export class EntitiesService {
           ctx,
         });
       } catch (err) {
-        // Unwrap domain errors propagated via HookEngine wrapper
+        // Unwrap errors propagated via HookEngine wrapper
         const cause = (err as { cause?: unknown })?.cause;
-        if (cause && cause instanceof AppError) throw cause;
+        if (cause instanceof AppError) throw cause;
+        if (cause instanceof HttpException) throw cause;
         throw err;
       }
     }
@@ -331,7 +335,7 @@ export class EntitiesService {
     if (this.hooks) {
       const ctx: HookContext = {
         payload: changes,
-        meta: { typeKey: dt.keyLower },
+        meta: { typeKey: dt.keyLower, reqId: this.reqId?.getId() },
       };
       try {
         await this.hooks.run({
@@ -341,7 +345,8 @@ export class EntitiesService {
         });
       } catch (err) {
         const cause = (err as { cause?: unknown })?.cause;
-        if (cause && cause instanceof AppError) throw cause;
+        if (cause instanceof AppError) throw cause;
+        if (cause instanceof HttpException) throw cause;
         throw err;
       }
     }
