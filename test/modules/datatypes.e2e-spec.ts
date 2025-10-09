@@ -8,6 +8,7 @@ import { AppModule } from '../../src/app.module';
 import { MongoInfraBootstrap } from '../../src/infra/mongo/mongo.bootstrap';
 import { DockerModule } from '../../src/modules/docker/docker.module';
 import type { CreateDatatypeResponseDto } from '../../src/modules/datatypes/dto/CreateDatatype.response.dto';
+import type { GetDatatypeResponseDto } from '../../src/modules/datatypes/dto/GetDatatype.response.dto';
 
 const IS_CI = /^(1|true)$/i.test(process.env.CI ?? '');
 jest.setTimeout(120_000);
@@ -42,6 +43,20 @@ jest.setTimeout(120_000);
 
   afterAll(async () => {
     await app.close();
+  });
+
+  it('returns seeded post datatype with expected fields', async () => {
+    const res = await request(server)
+      .get('/api/datatypes/get')
+      .query({ key: 'post' })
+      .expect(200);
+
+    const body = res.body as Readonly<GetDatatypeResponseDto>;
+    expect(body.datatype).not.toBeNull();
+    expect(body.datatype?.status).toBe('published');
+    expect(body.datatype?.label).toBe('Post');
+    expect(body.datatype?.fields).toHaveLength(2);
+    expect(body.datatype?.fields.every((f) => f.required === true)).toBe(true);
   });
 
   it('creates a draft datatype (perType) and manages unique index flow', async () => {

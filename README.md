@@ -105,6 +105,7 @@ co-locate tests next to implementation when feasible.
 3. Important variables:
    - `PORT` (default 3000)
    - `MONGO_URL`, `MONGO_DB`, `MONGO_AUTO_START` (infra bootstrap)
+   - `DATATYPES_BOOTSTRAP` (default `1` locally) — set to `0`/`false` to skip datatype seed bootstrap; automatically disabled when `CI=1`.
    - Docker auth variables if the Docker module needs registry access
 4. Never commit secrets—use `.env.local` or CI secrets for sensitive data.
 
