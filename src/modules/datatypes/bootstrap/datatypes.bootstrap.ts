@@ -16,6 +16,8 @@ import {
   type EntityIndexSpec,
 } from '../internal';
 import { loadDatatypeSeedsFromDir, mergeDatatypeSeeds } from '../seed-sources';
+import { HookStore } from '../../hooks/hook.store';
+import type { HookActionId, HookPhase, HookStep } from '../../hooks/types';
 
 interface SeedSyncStats {
   inserted: number;
@@ -31,7 +33,10 @@ interface SeedSyncStats {
 export class DatatypesBootstrap implements OnModuleInit {
   private readonly logger = new Logger(DatatypesBootstrap.name);
 
-  constructor(private readonly mongo: MongodbService) {}
+  constructor(
+    private readonly mongo: MongodbService,
+    private readonly hooks: HookStore,
+  ) {}
 
   public async onModuleInit(): Promise<void> {
     if (!shouldRunBootstrap()) {
@@ -45,6 +50,7 @@ export class DatatypesBootstrap implements OnModuleInit {
       await this.ensureIndexes(coll);
       const seeds = await this.loadSeeds();
       const stats = await this.syncSeeds(coll, seeds);
+      this.registerHooks(seeds);
       this.logger.log(
         `Datatypes bootstrap complete (inserted ${stats.inserted}, reconciled ${stats.reconciled}).`,
       );
@@ -248,6 +254,43 @@ export class DatatypesBootstrap implements OnModuleInit {
       locked: true,
       updatedAt: now,
     };
+  }
+
+  private registerHooks(seeds: ReadonlyArray<DatatypeSeed>): void {
+    let typesWithHooks = 0;
+    let totalSteps = 0;
+
+    for (const seed of seeds) {
+      const phases = seed.hooks;
+      if (!phases) continue;
+      // Count steps and ensure at least one exists
+      let seedSteps = 0;
+      for (const steps of Object.values(phases)) {
+        seedSteps += Array.isArray(steps) ? steps.length : 0;
+      }
+      if (seedSteps === 0) continue;
+
+      // Cast phases into HookStore shape without importing types into datatypes internals
+      const mutablePhases: Partial<Record<HookPhase, HookStep[]>> = {};
+      for (const [phase, steps] of Object.entries(phases)) {
+        const key = phase as HookPhase;
+        if (!Array.isArray(steps)) continue;
+        // Create a mutable copy to satisfy HookStore type
+        mutablePhases[key] = steps.map((s) => {
+          const step = s as { action: unknown; args?: Record<string, unknown> };
+          const action = step.action as HookActionId;
+          const args = step.args ? { ...step.args } : undefined;
+          return { action, ...(args ? { args } : {}) } as HookStep;
+        });
+      }
+      this.hooks.applyPatch({ typeKey: seed.key, phases: mutablePhases });
+      totalSteps += seedSteps;
+      typesWithHooks += 1;
+    }
+
+    this.logger.log(
+      `Registered hooks for ${typesWithHooks} types (total ${totalSteps} steps).`,
+    );
   }
 }
 

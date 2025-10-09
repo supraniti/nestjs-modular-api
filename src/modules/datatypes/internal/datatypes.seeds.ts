@@ -20,6 +20,9 @@ export interface DatatypeSeed {
   readonly fields: ReadonlyArray<EntityField>;
   readonly storage: { readonly mode: StorageMode };
   readonly indexes: ReadonlyArray<EntityIndexSpec>;
+  readonly hooks?: Readonly<
+    Partial<Record<HookPhaseLiteral, ReadonlyArray<HookStepLiteral>>>
+  >;
   readonly locked: true;
 }
 
@@ -41,6 +44,24 @@ type IndexOptionsLiteral = Readonly<{
   name?: unknown;
   sparse?: unknown;
   partialFilterExpression?: unknown;
+}>;
+
+// Local literal-only types for hooks to avoid import cycles
+export type HookPhaseLiteral =
+  | 'beforeCreate'
+  | 'afterCreate'
+  | 'beforeGet'
+  | 'afterGet'
+  | 'beforeUpdate'
+  | 'afterUpdate'
+  | 'beforeDelete'
+  | 'afterDelete'
+  | 'beforeList'
+  | 'afterList';
+
+type HookStepLiteral = Readonly<{
+  action: string;
+  args?: Readonly<Record<string, unknown>>;
 }>;
 
 export const DATATYPE_SEEDS: ReadonlyArray<DatatypeSeed> = Object.freeze(
@@ -87,6 +108,9 @@ function parseSeedLiteral(
   storage: { readonly mode: StorageMode };
   fields: ReadonlyArray<EntityField>;
   indexes: ReadonlyArray<EntityIndexSpec>;
+  hooks?: Readonly<
+    Partial<Record<HookPhaseLiteral, ReadonlyArray<HookStepLiteral>>>
+  >;
 } {
   if (!isPlainObject(entry)) {
     throw new Error(`${context}: must be an object.`);
@@ -131,6 +155,7 @@ function parseSeedLiteral(
   const storageMode = parseStorageMode(literal.storage, keyContext);
   const fields = parseFields(literal.fields, keyContext);
   const indexes = parseIndexes(literal.indexes, keyContext);
+  const hooks = parseHooks(literal.hooks, keyContext);
 
   return {
     key,
@@ -140,6 +165,7 @@ function parseSeedLiteral(
     storage: { mode: storageMode },
     fields,
     indexes,
+    ...(hooks ? { hooks } : {}),
   };
 }
 
@@ -340,6 +366,9 @@ function finalizeDatatypeSeed(parsed: {
   storage: { readonly mode: StorageMode };
   fields: ReadonlyArray<EntityField>;
   indexes: ReadonlyArray<EntityIndexSpec>;
+  hooks?: Readonly<
+    Partial<Record<HookPhaseLiteral, ReadonlyArray<HookStepLiteral>>>
+  >;
 }): DatatypeSeed {
   const keyLower = normalizeKeyLower(parsed.key);
 
@@ -354,6 +383,7 @@ function finalizeDatatypeSeed(parsed: {
     },
     fields: Object.freeze(parsed.fields.map(cloneField)),
     indexes: Object.freeze(parsed.indexes.map(cloneIndex)),
+    ...(parsed.hooks ? { hooks: freezeHooks(parsed.hooks) } : {}),
     locked: true,
   });
 }
@@ -389,4 +419,89 @@ export function isDatatypeSeedKey(key: string): boolean {
 
 function isPlainObject(value: unknown): value is PlainObject {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+function parseHooks(
+  value: unknown,
+  context: string,
+):
+  | Readonly<Partial<Record<HookPhaseLiteral, ReadonlyArray<HookStepLiteral>>>>
+  | undefined {
+  if (value === undefined) return undefined;
+  if (!isPlainObject(value)) {
+    throw new Error(`${context}: hooks must be an object.`);
+  }
+
+  const record: Partial<
+    Record<HookPhaseLiteral, ReadonlyArray<HookStepLiteral>>
+  > = {};
+  for (const [phase, stepsVal] of Object.entries(value)) {
+    if (!isValidHookPhase(phase)) {
+      throw new Error(`${context}: hooks phase "${phase}" is not supported.`);
+    }
+    if (!Array.isArray(stepsVal)) {
+      throw new Error(
+        `${context}: hooks.${phase} must be an array when provided.`,
+      );
+    }
+    const steps: HookStepLiteral[] = stepsVal.map((s, idx) => {
+      const stepCtx = `${context} hooks.${phase}[${idx}]`;
+      if (!isPlainObject(s)) {
+        throw new Error(`${stepCtx}: must be an object.`);
+      }
+      const action = (s as { action?: unknown }).action;
+      if (typeof action !== 'string' || action.trim().length === 0) {
+        throw new Error(`${stepCtx}: action must be a non-empty string.`);
+      }
+      const args = (s as { args?: unknown }).args;
+      if (args !== undefined && !isPlainObject(args)) {
+        throw new Error(`${stepCtx}: args must be an object when provided.`);
+      }
+      return Object.freeze({
+        action: action.trim(),
+        ...(args
+          ? { args: Object.freeze({ ...(args as Record<string, unknown>) }) }
+          : {}),
+      });
+    });
+    (record as Record<string, unknown>)[phase] = Object.freeze(steps);
+  }
+
+  return Object.freeze(record);
+}
+
+function isValidHookPhase(value: string): value is HookPhaseLiteral {
+  return (
+    value === 'beforeCreate' ||
+    value === 'afterCreate' ||
+    value === 'beforeGet' ||
+    value === 'afterGet' ||
+    value === 'beforeUpdate' ||
+    value === 'afterUpdate' ||
+    value === 'beforeDelete' ||
+    value === 'afterDelete' ||
+    value === 'beforeList' ||
+    value === 'afterList'
+  );
+}
+
+function freezeHooks(
+  hooks: Readonly<
+    Partial<Record<HookPhaseLiteral, ReadonlyArray<HookStepLiteral>>>
+  >,
+): Readonly<Partial<Record<HookPhaseLiteral, ReadonlyArray<HookStepLiteral>>>> {
+  const out: Partial<Record<HookPhaseLiteral, ReadonlyArray<HookStepLiteral>>> =
+    {};
+  for (const [phase, steps] of Object.entries(hooks)) {
+    if (!isValidHookPhase(phase)) continue;
+    out[phase] = Object.freeze(
+      (steps ?? []).map((s) =>
+        Object.freeze({
+          action: s.action,
+          ...(s.args ? { args: Object.freeze({ ...s.args }) } : {}),
+        }),
+      ),
+    );
+  }
+  return Object.freeze(out);
 }

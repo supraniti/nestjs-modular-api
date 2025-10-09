@@ -280,6 +280,35 @@ Validation (derived from Datatype definition):
 - Unique scalar fields are pre-checked; duplicate key violations raise
   `UniqueViolationError`.
 
+#### Hooks in seeds
+
+- Datatype seeds may declare per-phase hook flows to be registered at bootstrap time (not executed yet).
+- Supported phases: `beforeCreate`, `afterCreate`, `beforeGet`, `afterGet`, `beforeUpdate`, `afterUpdate`, `beforeDelete`, `afterDelete`, `beforeList`, `afterList`.
+- Each step: `{ "action": string, "args"?: object }`.
+- Example seed excerpt (works in both `src/Data/datatypes.seeds.json` and filesystem seeds via `DATATYPES_SEEDS_DIR`):
+
+```
+{
+  "key": "post",
+  "label": "Post",
+  "status": "published",
+  "version": 1,
+  "storage": { "mode": "single" },
+  "fields": [ ... ],
+  "indexes": [],
+  "hooks": {
+    "beforeCreate": [
+      { "action": "validate", "args": { "schema": "post.create" } }
+    ],
+    "afterGet": [
+      { "action": "enrich", "args": { "with": ["author"] } }
+    ]
+  }
+}
+```
+
+During bootstrap, flows are parsed and stored in memory via HookStore. A log entry summarizes: `Registered hooks for <n> types (total <m> steps).`
+
 ### Discovery Module (API Explorer Support)
 
 - `GET /api/discovery/manifest` → Returns the Explorer manifest with static

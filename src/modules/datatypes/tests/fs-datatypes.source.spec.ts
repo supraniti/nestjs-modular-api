@@ -43,6 +43,30 @@ describe('FsDatatypeSeedSource', () => {
     });
   });
 
+  it('loads hooks from filesystem seeds', async () => {
+    await writeSeed('post.json', {
+      key: 'post',
+      label: 'Post',
+      status: 'published',
+      version: 1,
+      storage: { mode: 'single' },
+      fields: [{ fieldKey: 'string', required: true, array: false }],
+      indexes: [],
+      hooks: {
+        beforeCreate: [{ action: 'validate', args: { schema: 'post.create' } }],
+        afterGet: [{ action: 'enrich', args: { with: ['author'] } }],
+      },
+    });
+
+    const seeds = await loadDatatypeSeedsFromDir(tempDir);
+    expect(seeds).toHaveLength(1);
+    const [seed] = seeds;
+    expect(seed.hooks).toEqual({
+      beforeCreate: [{ action: 'validate', args: { schema: 'post.create' } }],
+      afterGet: [{ action: 'enrich', args: { with: ['author'] } }],
+    });
+  });
+
   it('throws when duplicate keys are defined', async () => {
     await writeSeed('post-a.json', {
       key: 'post',
@@ -79,6 +103,29 @@ describe('FsDatatypeSeedSource', () => {
     await expect(loadDatatypeSeedsFromDir(tempDir)).rejects.toThrow(
       /bad-datatype\.json: key must be a string\./,
     );
+  });
+
+  it('rejects invalid hook phase names with filename context', async () => {
+    await writeSeed('bad-hooks.json', {
+      key: 'post',
+      label: 'Post',
+      status: 'published',
+      version: 1,
+      storage: { mode: 'single' },
+      fields: [],
+      indexes: [],
+      hooks: { notAPhase: [] },
+    });
+
+    try {
+      await loadDatatypeSeedsFromDir(tempDir);
+      // Should not reach here
+      expect(false).toBe(true);
+    } catch (err) {
+      const msg = String(err);
+      expect(msg).toMatch(/bad-hooks\.json/);
+      expect(msg).toMatch(/hooks phase "notAPhase" is not supported/);
+    }
   });
 
   it('ignores non-json files', async () => {
