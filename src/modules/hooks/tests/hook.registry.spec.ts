@@ -3,6 +3,7 @@ import { HookRegistry } from '../hook.registry';
 import { ValidateAction } from '../actions/validate.action';
 import { EnrichAction } from '../actions/enrich.action';
 import { SchemaRegistry } from '../schema.registry';
+import { MongodbService } from '../../mongodb/mongodb.service';
 
 describe('HookRegistry', () => {
   it('pre-registers built-ins and get returns them', async () => {
@@ -11,6 +12,7 @@ describe('HookRegistry', () => {
         HookRegistry,
         ValidateAction,
         EnrichAction,
+        { provide: MongodbService, useValue: { getCollection: jest.fn() } },
         {
           provide: SchemaRegistry,
           useValue: {
@@ -46,6 +48,7 @@ describe('HookRegistry', () => {
         HookRegistry,
         ValidateAction,
         EnrichAction,
+        { provide: MongodbService, useValue: { getCollection: jest.fn() } },
         {
           provide: SchemaRegistry,
           useValue: {

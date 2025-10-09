@@ -6,6 +6,7 @@ import type { HookAction, HookContext } from '../types';
 import { ValidateAction } from '../actions/validate.action';
 import { EnrichAction } from '../actions/enrich.action';
 import { SchemaRegistry } from '../schema.registry';
+import { MongodbService } from '../../mongodb/mongodb.service';
 import { NestHookLogger } from '../types';
 
 describe('HookEngine', () => {
@@ -17,6 +18,7 @@ describe('HookEngine', () => {
         HookEngine,
         ValidateAction,
         EnrichAction,
+        { provide: MongodbService, useValue: { getCollection: jest.fn() } },
         NestHookLogger,
         {
           provide: SchemaRegistry,

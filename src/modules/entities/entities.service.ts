@@ -210,14 +210,22 @@ export class EntitiesService {
       this.mapDocToEntityItem(dt, doc),
     );
 
-    // afterList hook phase (read-only; safe no-op if hooks not wired)
+    // afterList hook phase (may enrich items)
     if (this.hooks) {
+      const base = { items, page, pageSize, total };
       const ctx: HookContext = {
         payload: { query },
-        result: { items, page, pageSize, total },
+        result: base.items,
         meta: { typeKey: dt.keyLower },
       };
-      await this.hooks.run({ typeKey: dt.keyLower, phase: 'afterList', ctx });
+      const out = await this.hooks.run({
+        typeKey: dt.keyLower,
+        phase: 'afterList',
+        ctx,
+      });
+      const enriched =
+        (out?.result as EntityItemDto[] | undefined) ?? base.items;
+      return { ...base, items: enriched };
     }
 
     return { items, page, pageSize, total };
@@ -248,14 +256,19 @@ export class EntitiesService {
     if (!doc) throw new EntityNotFoundError(dt.keyLower, id);
     const mapped = this.mapDocToEntityItem(dt, doc);
 
-    // afterGet hook phase (read-only; safe no-op if hooks not wired)
+    // afterGet hook phase (may enrich result)
     if (this.hooks) {
       const ctx: HookContext = {
         payload: { id },
         result: mapped,
         meta: { typeKey: dt.keyLower },
       };
-      await this.hooks.run({ typeKey: dt.keyLower, phase: 'afterGet', ctx });
+      const out = await this.hooks.run({
+        typeKey: dt.keyLower,
+        phase: 'afterGet',
+        ctx,
+      });
+      return (out?.result as EntityItemDto | undefined) ?? mapped;
     }
 
     return mapped;
