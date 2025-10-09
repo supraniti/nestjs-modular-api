@@ -160,6 +160,20 @@ export class EntitiesService {
               enumCaseInsensitive: f.constraints.enumCaseInsensitive,
             }
           : undefined,
+        // expose ref kind if present in stored doc
+        kind: (f as unknown as { kind?: { type?: string; target?: string; cardinality?: string; onDelete?: string } })
+          .kind
+          ? {
+              type: 'ref',
+              target: String(
+                (f as unknown as { kind: { target: string } }).kind.target,
+              ),
+              cardinality: (f as unknown as { kind?: { cardinality?: string } }).kind
+                ?.cardinality as 'one' | 'many' | undefined,
+              onDelete: (f as unknown as { kind?: { onDelete?: string } }).kind
+                ?.onDelete as 'restrict' | 'setNull' | 'cascade' | undefined,
+            }
+          : undefined,
         order: f.order,
       })),
       indexes: doc.indexes,

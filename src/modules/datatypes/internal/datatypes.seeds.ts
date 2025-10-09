@@ -37,6 +37,7 @@ type DatatypeSeedFieldLiteral = Readonly<{
   unique?: unknown;
   constraints?: unknown;
   order?: unknown;
+  kind?: unknown;
 }>;
 
 type IndexLiteral = Readonly<{ keys?: unknown; options?: unknown }>;
@@ -264,11 +265,54 @@ function parseField(field: unknown, context: string): EntityField {
     ? Object.freeze({ ...literal.constraints })
     : undefined;
 
+  // Parse optional ref kind (Ticket I)
+  let kind: { type: 'ref'; target: string; cardinality?: 'one' | 'many'; onDelete?: 'restrict' | 'setNull' | 'cascade' } | undefined;
+  if (literal.kind !== undefined) {
+    if (!isPlainObject(literal.kind)) {
+      throw new Error(`${fieldContext}: kind must be an object when provided.`);
+    }
+    const k = literal.kind as Record<string, unknown>;
+    if (k['type'] !== 'ref') {
+      throw new Error(`${fieldContext}: kind.type must be 'ref' when provided.`);
+    }
+    const target = String(k['target'] ?? '').trim();
+    if (!isKebabCaseKey(target) || target.length === 0) {
+      throw new Error(`${fieldContext}: kind.target must be kebab-case string.`);
+    }
+    const cardinalityRaw = k['cardinality'];
+    const cardinality = cardinalityRaw === undefined ? undefined : (cardinalityRaw === 'one' || cardinalityRaw === 'many' ? (cardinalityRaw as 'one' | 'many') : (() => { throw new Error(`${fieldContext}: kind.cardinality must be 'one' or 'many' when provided.`);} )());
+    const onDeleteRaw = k['onDelete'];
+    const onDelete = onDeleteRaw === undefined ? undefined : (onDeleteRaw === 'restrict' || onDeleteRaw === 'setNull' || onDeleteRaw === 'cascade' ? (onDeleteRaw as 'restrict'|'setNull'|'cascade') : (() => { throw new Error(`${fieldContext}: kind.onDelete invalid.`);} )());
+    // Cardinality vs array check
+    const many = cardinality ? cardinality === 'many' : array === true;
+    if (array === true && cardinality === 'one') {
+      throw new Error(`${fieldContext}: array true conflicts with cardinality 'one'.`);
+    }
+    if (array === false && cardinality === 'many') {
+      throw new Error(`${fieldContext}: array false conflicts with cardinality 'many'.`);
+    }
+    kind = { type: 'ref', target, ...(cardinality ? { cardinality } : {}), ...(onDelete ? { onDelete } : {}) };
+    // If kind present, ignore legacy constraints.ref
+  } else if (constraints && typeof (constraints as Record<string, unknown>)['ref'] === 'string') {
+    const target = String((constraints as Record<string, unknown>)['ref']).trim();
+    if (isKebabCaseKey(target) && target.length > 0) {
+      // Warn once per field
+      // eslint-disable-next-line no-console
+      console.warn(`${fieldContext}: constraints.ref is deprecated; coerced to kind.ref.`);
+      kind = { type: 'ref', target };
+      // Drop constraints.ref in normalized form
+      const cloned = { ...(constraints as Record<string, unknown>) };
+      delete (cloned as Record<string, unknown>)['ref'];
+      ( (constraints as unknown) as Record<string, unknown> )['ref']; // no-op to satisfy TS
+    }
+  }
+
   return Object.freeze({
     fieldKey,
     required,
     array,
     ...(literal.unique !== undefined ? { unique: literal.unique } : {}),
+    ...(kind ? { kind } : {}),
     ...(constraints ? { constraints } : {}),
     ...(literal.order !== undefined ? { order: literal.order } : {}),
   });

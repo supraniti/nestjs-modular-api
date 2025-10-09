@@ -379,6 +379,7 @@ function cloneFieldForWrite(field: EntityField): EntityField {
     required: field.required,
     array: field.array,
     ...(field.unique !== undefined ? { unique: field.unique } : {}),
+    ...(field.kind !== undefined ? { kind: field.kind } : {}),
     ...(field.constraints !== undefined
       ? { constraints: { ...field.constraints } }
       : {}),
@@ -448,6 +449,7 @@ function normalizeField(field: EntityField): Record<string, unknown> {
     array: field.array,
   };
   if (field.unique !== undefined) normalized.unique = field.unique;
+  if (field.kind !== undefined) normalized.kind = field.kind;
   if (field.constraints !== undefined)
     normalized.constraints = field.constraints;
   if (field.order !== undefined) normalized.order = field.order;

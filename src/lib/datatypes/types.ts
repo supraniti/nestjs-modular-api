@@ -14,6 +14,16 @@ export interface EntityField {
   readonly required: boolean;
   /** If true, entity value is an array of this field’s type. */
   readonly array: boolean;
+  /** Optional formal kind overrides (e.g., references). */
+  readonly kind?: Readonly<
+    | {
+        readonly type: 'ref';
+        /** kebab-case datatype key (normalized lower) */
+        readonly target: string;
+        readonly cardinality?: 'one' | 'many';
+        readonly onDelete?: 'restrict' | 'setNull' | 'cascade';
+      }
+  >;
   /**
    * Enforce uniqueness across entities for this field.
    * Stage 1 rule: forbidden when `array === true`.
@@ -90,3 +100,4 @@ export function collectionNameForDatatype(key: string): string {
 export function uniqueIndexName(datatypeKey: string, fieldKey: string): string {
   return `uniq_${datatypeKey}_${fieldKey}`;
 }
+
