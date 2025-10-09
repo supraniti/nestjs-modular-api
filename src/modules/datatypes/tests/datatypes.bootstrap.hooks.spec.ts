@@ -4,6 +4,7 @@ import * as path from 'node:path';
 
 import { DatatypesBootstrap } from '../bootstrap/datatypes.bootstrap';
 import type { MongodbService } from '../../mongodb/mongodb.service';
+import type { RefIntegrityService } from '../ref-integrity.service';
 
 describe('DatatypesBootstrap – HookStore registration', () => {
   const originalCi = process.env.CI;
@@ -105,9 +106,13 @@ function createHarness(): {
   };
   const hookStore = { applyPatch: jest.fn(), reset: jest.fn() };
 
+  const refs: Pick<RefIntegrityService, 'buildFromSeeds'> = {
+    buildFromSeeds: jest.fn(),
+  };
   const bootstrap = new DatatypesBootstrap(
     mongo as unknown as MongodbService,
     hookStore as unknown as import('../../hooks/hook.store').HookStore,
+    refs as unknown as RefIntegrityService,
   );
   const logger = { log: jest.fn(), warn: jest.fn(), error: jest.fn() };
   (bootstrap as unknown as { logger: typeof logger }).logger = logger;

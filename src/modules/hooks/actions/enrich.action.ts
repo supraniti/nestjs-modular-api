@@ -65,7 +65,8 @@ export class EnrichAction implements HookAction<unknown, unknown> {
       throw new ValidationHttpException(details);
     }
     const withKeys = (stepArgs['with'] as string[]) ?? [];
-    const selectFields = (stepArgs['select'] as string[] | undefined) ?? undefined;
+    const selectFields =
+      (stepArgs['select'] as string[] | undefined) ?? undefined;
     const asMap = (stepArgs['as'] as Record<string, string> | undefined) ?? {};
     let maxDepth = Math.max(0, Number(stepArgs['depth'] ?? 0));
     if (maxDepth > 5) {
@@ -155,8 +156,7 @@ export class EnrichAction implements HookAction<unknown, unknown> {
           const targetType =
             (constraints?.['ref'] as string | undefined) || undefined;
           if (!targetType) continue;
-          const outKey =
-            (asMap as Record<string, string>)[fieldKey] ?? fieldKey;
+          const outKey = asMap[fieldKey] ?? fieldKey;
           const val = node.doc[fieldKey];
           if (val == null) {
             node.doc[outKey] = Array.isArray(val) ? [] : null;
@@ -232,8 +232,7 @@ export class EnrichAction implements HookAction<unknown, unknown> {
           const targetType =
             (constraints?.['ref'] as string | undefined) || undefined;
           if (!targetType) continue;
-          const outKey =
-            (asMap as Record<string, string>)[fieldKey] ?? fieldKey;
+          const outKey = asMap[fieldKey] ?? fieldKey;
           const val = node.doc[fieldKey];
           if (val == null) {
             node.doc[outKey] = Array.isArray(val) ? [] : null;

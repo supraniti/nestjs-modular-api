@@ -1,4 +1,10 @@
-import { Injectable, Optional } from '@nestjs/common';
+import {
+  Injectable,
+  Optional,
+  HttpException,
+  HttpStatus,
+  Logger,
+} from '@nestjs/common';
 import type { ListEntitiesQueryDto } from './dto/ListEntities.request.dto';
 import type {
   ListEntitiesResponseDto,
@@ -29,8 +35,8 @@ import { MongodbService } from '../mongodb/mongodb.service';
 import { HookEngine } from '../hooks/hook.engine';
 import type { HookContext } from '../hooks/types';
 import { AppError } from '../../lib/errors/AppError';
-import { HttpException } from '@nestjs/common';
 import { RequestIdService } from '../hooks/request-id.service';
+import { RefIntegrityService } from '../datatypes/ref-integrity.service';
 
 /** Field/constraints shapes (phase 1) */
 type FieldType = 'string' | 'number' | 'boolean' | 'date' | 'enum';
@@ -88,10 +94,12 @@ function isHex24(s: string | undefined): s is string {
 
 @Injectable()
 export class EntitiesService {
+  private readonly logger = new Logger('EntitiesService');
   constructor(
     private readonly mongo: MongodbService,
     @Optional() private readonly hooks?: HookEngine,
     @Optional() private readonly reqId?: RequestIdService,
+    @Optional() private readonly refs?: RefIntegrityService,
   ) {}
 
   /* -----------------------------
@@ -161,15 +169,23 @@ export class EntitiesService {
             }
           : undefined,
         // expose ref kind if present in stored doc
-        kind: (f as unknown as { kind?: { type?: string; target?: string; cardinality?: string; onDelete?: string } })
-          .kind
+        kind: (
+          f as unknown as {
+            kind?: {
+              type?: string;
+              target?: string;
+              cardinality?: string;
+              onDelete?: string;
+            };
+          }
+        ).kind
           ? {
               type: 'ref',
               target: String(
                 (f as unknown as { kind: { target: string } }).kind.target,
               ),
-              cardinality: (f as unknown as { kind?: { cardinality?: string } }).kind
-                ?.cardinality as 'one' | 'many' | undefined,
+              cardinality: (f as unknown as { kind?: { cardinality?: string } })
+                .kind?.cardinality as 'one' | 'many' | undefined,
               onDelete: (f as unknown as { kind?: { onDelete?: string } }).kind
                 ?.onDelete as 'restrict' | 'setNull' | 'cascade' | undefined,
             }
@@ -325,6 +341,12 @@ export class EntitiesService {
     // Unique pre-checks
     await this.ensureUniqueConstraints(dt, col, validation.value, undefined);
 
+    // Referential integrity: existence checks (guarded by env)
+    if (this.shouldCheckRefs()) {
+      await this.refs?.ensureFromDb();
+      await this.ensureRefExistence(dt, validation.value);
+    }
+
     const now = new Date();
     const toInsert: Record<string, unknown> = {
       ...validation.value,
@@ -386,6 +408,12 @@ export class EntitiesService {
     // Unique pre-checks (exclude current _id)
     await this.ensureUniqueConstraints(dt, col, validation.value, _id);
 
+    // Referential integrity: existence checks on provided ref fields
+    if (this.shouldCheckRefs()) {
+      await this.refs?.ensureFromDb();
+      await this.ensureRefExistence(dt, validation.value);
+    }
+
     const filter: Filter<Document> = discriminator
       ? { _id, [discriminator.field]: discriminator.value }
       : { _id };
@@ -422,6 +450,12 @@ export class EntitiesService {
     const filter: Filter<Document> = discriminator
       ? { _id, [discriminator.field]: discriminator.value }
       : { _id };
+
+    // onDelete behaviors (guarded by env)
+    if (this.shouldRunOnDelete() && this.refs) {
+      await this.refs.ensureFromDb();
+      await this.applyOnDelete(dt, _id);
+    }
 
     const res = await col.deleteOne(filter);
     if (res.deletedCount === 0) throw new EntityNotFoundError(dt.keyLower, id);
@@ -521,6 +555,221 @@ export class EntitiesService {
       return new UniqueViolationError(dt.keyLower, field, undefined);
     }
     return null;
+  }
+
+  /* ------------------------
+     Helper: ref integrity
+     ------------------------ */
+
+  private shouldCheckRefs(): boolean {
+    const v = (process.env.DATATYPES_REF_CHECK ?? '1').toLowerCase();
+    return v === '1' || v === 'true';
+  }
+  private shouldRunOnDelete(): boolean {
+    const v = (process.env.DATATYPES_ONDELETE ?? '1').toLowerCase();
+    return v === '1' || v === 'true';
+  }
+
+  private async ensureRefExistence(
+    dt: DatatypeDoc,
+    doc: Record<string, unknown>,
+  ): Promise<void> {
+    if (!this.refs) return;
+    // Build ref field specs from stored doc fields (tolerate extra properties)
+    const fields = (dt.fields as unknown[] | undefined) ?? [];
+    for (const f of fields) {
+      const rec = f as Record<string, unknown>;
+      const rawKey = rec['key'] ?? rec['fieldKey'];
+      if (typeof rawKey !== 'string' || rawKey.trim().length === 0) continue;
+      const fieldKey = rawKey.trim();
+      const kind = rec['kind'] as
+        | { type?: string; target?: string; cardinality?: 'one' | 'many' }
+        | undefined;
+      if (!kind || kind.type !== 'ref') continue;
+      const target = String(kind.target ?? '').toLowerCase();
+      if (!target) continue;
+      const many = kind.cardinality
+        ? kind.cardinality === 'many'
+        : rec['array'] === true;
+
+      const raw = doc[fieldKey];
+      if (raw === undefined) continue; // absent in payload (partial update)
+      if (raw === null) {
+        // allow null unless field is required: validation already handled required rules
+        continue;
+      }
+
+      const ids: import('mongodb').ObjectId[] = [];
+      if (many) {
+        if (!Array.isArray(raw) || raw.length === 0) continue; // empty arrays are allowed
+        for (const v of raw) {
+          const oid = this.asObjectIdOrNull(v);
+          if (oid) ids.push(oid);
+        }
+      } else {
+        const oid = this.asObjectIdOrNull(raw);
+        if (oid) ids.push(oid);
+      }
+      if (ids.length === 0) continue;
+
+      const missing = await this.refs.existsMany(target, ids);
+      if (missing.size > 0) {
+        const missingList = Array.from(missing);
+        // BadRequest with structured error
+        throw new HttpException(
+          {
+            code: 'RefMissing',
+            field: fieldKey,
+            target,
+            missing: missingList,
+          },
+          HttpStatus.BAD_REQUEST,
+        );
+      }
+    }
+  }
+
+  private asObjectIdOrNull(val: unknown): ObjectId | null {
+    if (val == null) return null;
+    try {
+      if (val instanceof ObjectId) return val;
+      const s = typeof val === 'string' ? val : undefined;
+      if (!s) return null;
+      return /^[0-9a-fA-F]{24}$/.test(s) ? new ObjectId(s) : null;
+    } catch {
+      return null;
+    }
+  }
+
+  private async applyOnDelete(
+    dt: DatatypeDoc,
+    sourceId: ObjectId,
+  ): Promise<void> {
+    if (!this.refs) return;
+    const incoming = this.refs.getIncoming(dt.keyLower);
+    this.logger.debug?.(
+      `applyOnDelete for ${dt.keyLower}: ${incoming.length} incoming edge(s)`,
+    );
+    if (incoming.length === 0) return;
+
+    const db = await this.mongo.getDb();
+    const maxBatch = Math.max(
+      1,
+      Number.parseInt(process.env.DATATYPES_ONDELETE_MAX ?? '1000', 10) || 1000,
+    );
+
+    for (const edge of incoming) {
+      const dts = db.collection<Record<string, unknown>>('datatypes');
+      const fromDt = await dts.findOne({
+        keyLower: edge.from,
+      } as Filter<Document>);
+      if (!fromDt) continue;
+      const info = this.resolveCollectionInfoAny(
+        fromDt as Record<string, unknown>,
+      );
+      const col = db.collection<Record<string, unknown>>(info.collection);
+
+      const hex = sourceId.toHexString();
+      const orFilter = [
+        { [edge.fieldKey]: sourceId } as Filter<Document>,
+        { [edge.fieldKey]: hex } as Filter<Document>,
+        { [edge.fieldKey]: { $in: [sourceId, hex] } } as Filter<Document>,
+      ];
+      const baseFilter: Filter<Document> = info.discriminator
+        ? {
+            $or: orFilter,
+            [info.discriminator.field]: info.discriminator.value,
+          }
+        : { $or: orFilter };
+
+      if (edge.onDelete === 'restrict') {
+        const exists = await col.findOne(baseFilter, {
+          projection: { _id: 1 },
+        });
+        if (exists) {
+          throw new HttpException(
+            {
+              code: 'RefRestrict',
+              type: edge.from,
+              field: edge.fieldKey,
+              count: 1,
+              mode: 'restrict',
+            },
+            HttpStatus.CONFLICT,
+          );
+        }
+        continue;
+      }
+
+      if (edge.onDelete === 'setNull') {
+        // Batch loop
+        for (;;) {
+          const ids = await col
+            .find(baseFilter, { projection: { _id: 1 } })
+            .limit(maxBatch)
+            .toArray();
+          if (ids.length === 0) break;
+          const idList = ids.map((d) => d._id as unknown as ObjectId);
+          const filter: Filter<Document> = info.discriminator
+            ? {
+                _id: { $in: idList },
+                [info.discriminator.field]: info.discriminator.value,
+              }
+            : { _id: { $in: idList } };
+          const update = edge.many
+            ? { $pull: { [edge.fieldKey]: { $in: [sourceId, hex] } } }
+            : { $set: { [edge.fieldKey]: null } };
+          await col.updateMany(filter, update as unknown as Document);
+          if (ids.length < maxBatch) break;
+        }
+        continue;
+      }
+
+      if (edge.onDelete === 'cascade') {
+        let totalDeleted = 0;
+        for (;;) {
+          const ids = await col
+            .find(baseFilter, { projection: { _id: 1 } })
+            .limit(maxBatch)
+            .toArray();
+          if (ids.length === 0) break;
+          const idList = ids.map((d) => d._id as unknown as ObjectId);
+          const filter: Filter<Document> = info.discriminator
+            ? {
+                _id: { $in: idList },
+                [info.discriminator.field]: info.discriminator.value,
+              }
+            : { _id: { $in: idList } };
+          const res = await col.deleteMany(filter);
+          totalDeleted += res.deletedCount ?? 0;
+          if (ids.length < maxBatch) break;
+        }
+        this.logger.log?.(
+          `onDelete=cascade removed ${totalDeleted} ${edge.from} referencing ${dt.keyLower}`,
+        );
+        continue;
+      }
+    }
+  }
+
+  private resolveCollectionInfoAny(dt: Record<string, unknown>): {
+    collection: string;
+    discriminator?: { field: string; value: string };
+  } {
+    const keyLower =
+      `${(dt['keyLower'] as string) ?? (dt['key'] as string) ?? ''}`.toLowerCase();
+    const storageMode = dt['storage'];
+    const mode =
+      typeof storageMode === 'string'
+        ? storageMode
+        : (storageMode as { mode?: string })?.mode;
+    if (mode === 'perType') return { collection: `data_${keyLower}` };
+    if (mode === 'single')
+      return {
+        collection: 'data_entities',
+        discriminator: { field: '__type', value: keyLower },
+      };
+    return { collection: `data_${keyLower}` };
   }
 
   /* ------------------------

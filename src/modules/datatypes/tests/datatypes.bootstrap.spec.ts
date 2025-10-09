@@ -3,6 +3,7 @@ import { DatatypesBootstrap } from '../bootstrap/datatypes.bootstrap';
 import { DATATYPE_SEEDS } from '../internal/datatypes.seeds';
 import type { DataTypeDocBase } from '@lib/datatypes';
 import type { MongodbService } from '../../mongodb/mongodb.service';
+import type { RefIntegrityService } from '../ref-integrity.service';
 
 describe('DatatypesBootstrap', () => {
   const originalCi = process.env.CI;
@@ -284,9 +285,13 @@ export function createHarness(): Harness {
     getFlow: jest.fn(),
     reset: jest.fn(),
   };
+  const refs: Pick<RefIntegrityService, 'buildFromSeeds'> = {
+    buildFromSeeds: jest.fn(),
+  };
   const bootstrap = new DatatypesBootstrap(
     mongo as unknown as MongodbService,
     hookStore as unknown as import('../../hooks/hook.store').HookStore,
+    refs as unknown as RefIntegrityService,
   );
   const logger = {
     log: jest.fn(),

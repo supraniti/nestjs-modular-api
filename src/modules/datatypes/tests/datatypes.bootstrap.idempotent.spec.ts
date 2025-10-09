@@ -4,6 +4,7 @@ import * as path from 'node:path';
 
 import { DatatypesBootstrap } from '../bootstrap/datatypes.bootstrap';
 import type { MongodbService } from '../../mongodb/mongodb.service';
+import type { RefIntegrityService } from '../ref-integrity.service';
 import { HookStore } from '../../hooks/hook.store';
 
 describe('DatatypesBootstrap — idempotent HookStore rebuild', () => {
@@ -136,9 +137,13 @@ function createHarness(hookStore: HookStore): {
     getDb: jest.fn().mockResolvedValue(db),
   };
 
+  const refs: Pick<RefIntegrityService, 'buildFromSeeds'> = {
+    buildFromSeeds: jest.fn(),
+  };
   const bootstrap = new DatatypesBootstrap(
     mongo as unknown as MongodbService,
     hookStore,
+    refs as unknown as RefIntegrityService,
   );
   const logger = {
     log: jest.fn(),

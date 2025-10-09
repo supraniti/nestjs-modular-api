@@ -17,6 +17,7 @@ import {
 } from '../internal';
 import { loadDatatypeSeedsFromDir, mergeDatatypeSeeds } from '../seed-sources';
 import { HookStore } from '../../hooks/hook.store';
+import { RefIntegrityService } from '../ref-integrity.service';
 import type { HookActionId, HookPhase, HookStep } from '../../hooks/types';
 import { HOOK_PHASES } from '../../hooks/types';
 
@@ -37,6 +38,7 @@ export class DatatypesBootstrap implements OnModuleInit {
   constructor(
     private readonly mongo: MongodbService,
     private readonly hooks: HookStore,
+    private readonly refs: RefIntegrityService,
   ) {}
 
   public async onModuleInit(): Promise<void> {
@@ -52,6 +54,8 @@ export class DatatypesBootstrap implements OnModuleInit {
       const seeds = await this.loadSeeds();
       const stats = await this.syncSeeds(coll, seeds);
       this.registerHooks(seeds);
+      // Build RefGraph for referential integrity and discovery relations
+      this.refs.buildFromSeeds(seeds);
       this.logger.log(
         `Datatypes bootstrap complete (inserted ${stats.inserted}, reconciled ${stats.reconciled}).`,
       );

@@ -1,6 +1,8 @@
 import { Injectable } from '@nestjs/common';
 import { MongodbService } from '../mongodb/mongodb.service';
 import { EntitiesService } from '../entities/entities.service';
+import { RefIntegrityService } from '../datatypes/ref-integrity.service';
+import type { RelationEdgeDto, TypeRelationsDto } from '@lib/types/explorer';
 import type {
   ExplorerManifest,
   ExplorerModulesManifest,
@@ -76,6 +78,7 @@ export class DiscoveryService {
   constructor(
     private readonly mongo: MongodbService,
     private readonly entities: EntitiesService,
+    private readonly refs: RefIntegrityService,
   ) {}
 
   /* ---------------- Manifest (all) ---------------- */
@@ -87,12 +90,20 @@ export class DiscoveryService {
       entities: { types: await this.loadAllEntityTypes() },
     };
 
+    await this.refs.ensureFromDb();
+    const relations = this.mapEdgesToDto(this.refs.toEdges()).sort((a, b) =>
+      a.from === b.from
+        ? a.fieldKey.localeCompare(b.fieldKey)
+        : a.from.localeCompare(b.from),
+    );
+
     return {
       version: 1,
       baseUrl: this.baseUrl,
       openapiUrl: this.openapiUrl,
       modules,
       generatedAt: new Date().toISOString(),
+      relations,
     };
   }
 
@@ -104,6 +115,7 @@ export class DiscoveryService {
     storage: 'single' | 'perType';
     routes: ExplorerEndpoint[];
     schemas: EntitySchemas;
+    relations: TypeRelationsDto;
   }> {
     // Reuse EntitiesService guardrails (unknown/unpublished)
     const dt = await this.entities.getDatatype(typeKey);
@@ -117,13 +129,42 @@ export class DiscoveryService {
       fields: dt.fields as FieldSpec[],
     });
 
+    await this.refs.ensureFromDb();
+    const kLower = dt.key.toLowerCase();
+    const outgoing = this.mapEdgesToDto(this.refs.getOutgoing(kLower)).sort(
+      (a, b) => a.fieldKey.localeCompare(b.fieldKey),
+    );
+    const incoming = this.mapEdgesToDto(this.refs.getIncoming(kLower)).sort(
+      (a, b) => a.fieldKey.localeCompare(b.fieldKey),
+    );
+
     return {
       key: dt.key,
       label: dt.label,
       storage: dt.storage,
       routes,
       schemas,
+      relations: { outgoing, incoming },
     };
+  }
+
+  private mapEdgesToDto(
+    edges: ReadonlyArray<{
+      from: string;
+      to: string;
+      fieldKey: string;
+      many: boolean;
+      onDelete: string;
+    }>,
+  ): RelationEdgeDto[] {
+    return edges.map((e) => ({
+      from: e.from,
+      to: e.to,
+      fieldKey: e.fieldKey,
+      cardinality: e.many ? 'many' : 'one',
+      onDelete:
+        (e.onDelete as 'restrict' | 'setNull' | 'cascade') ?? 'restrict',
+    }));
   }
 
   /* ===========================================================

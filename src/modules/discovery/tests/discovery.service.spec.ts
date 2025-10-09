@@ -2,6 +2,7 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { DiscoveryService } from '../discovery.service';
 import { MongodbService } from '../../mongodb/mongodb.service';
 import { EntitiesService } from '../../entities/entities.service';
+import { RefIntegrityService } from '../../datatypes/ref-integrity.service';
 import type { Collection, Document, ObjectId } from 'mongodb';
 
 type Sort = Record<string, 1 | -1>;
@@ -96,6 +97,15 @@ describe('DiscoveryService', () => {
         DiscoveryService,
         { provide: MongodbService, useValue: mongo },
         { provide: EntitiesService, useValue: entities },
+        {
+          provide: RefIntegrityService,
+          useValue: {
+            ensureFromDb: jest.fn().mockResolvedValue(undefined),
+            toEdges: () => [],
+            getIncoming: () => [],
+            getOutgoing: () => [],
+          },
+        },
       ],
     }).compile();
 

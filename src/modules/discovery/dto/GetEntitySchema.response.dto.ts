@@ -1,4 +1,8 @@
-import type { ExplorerEndpoint, EntitySchemas } from '@lib/types/explorer';
+import type {
+  ExplorerEndpoint,
+  EntitySchemas,
+  TypeRelationsDto,
+} from '@lib/types/explorer';
 
 /**
  * Response DTO for GET /api/discovery/entities/:type/schema
@@ -9,4 +13,5 @@ export interface GetEntitySchemaResponseDto {
   storage: 'single' | 'perType';
   routes: ExplorerEndpoint[];
   schemas: EntitySchemas;
+  relations: TypeRelationsDto;
 }

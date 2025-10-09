@@ -123,6 +123,7 @@ export interface ExplorerEntityType {
   routes: ExplorerEndpoint[];
   schemas: EntitySchemas;
   examples?: EntityExamples;
+  relations?: TypeRelationsDto;
 }
 
 /** Module groups shown in the explorer. */
@@ -150,4 +151,23 @@ export interface ExplorerManifest {
   modules: ExplorerModulesManifest;
   /** ISO timestamp of generation (for client cache keys). */
   generatedAt: string;
+  /** Optional global relations set across all types. */
+  relations?: RelationEdgeDto[];
+}
+
+// New relation DTOs (Ticket K)
+export type RelationCardinality = 'one' | 'many';
+export type OnDeleteMode = 'restrict' | 'setNull' | 'cascade';
+
+export interface RelationEdgeDto {
+  from: string; // referencing datatype keyLower
+  to: string; // referenced datatype keyLower
+  fieldKey: string;
+  cardinality: RelationCardinality;
+  onDelete: OnDeleteMode;
+}
+
+export interface TypeRelationsDto {
+  outgoing: RelationEdgeDto[];
+  incoming: RelationEdgeDto[];
 }

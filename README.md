@@ -421,6 +421,45 @@ Tip: run `pnpm test -- --runTestsByPath <file>` for focused unit debugging.
 
 ---
 
+## Referential Integrity
+
+Ref fields (fields with `kind.type === 'ref'`) participate in integrity rules:
+
+- Write-time checks (create/update):
+  - one: when a non-null value is present, referenced doc must exist; otherwise 400 with `{ code: 'RefMissing', field, target, missing: [ids] }`.
+  - many: when a non-empty array is present, all referenced IDs must exist; otherwise 400 with missing IDs.
+  - Skips absent fields in partial updates and explicit `null` when not required.
+  - Toggle via `DATATYPES_REF_CHECK` (default `1`).
+
+- Delete-time onDelete behaviors for incoming edges:
+  - `restrict` (default): blocks delete with 409 when references exist, body includes `{ code: 'RefRestrict', type, field, count }`.
+  - `setNull`: sets `one` refs to null; pulls deleted id from `many` arrays.
+  - `cascade`: deletes referencing docs (one level only).
+  - Toggle via `DATATYPES_ONDELETE` (default `1`).
+  - Safety cap via `DATATYPES_ONDELETE_MAX` (default `1000`).
+
+## Discovery Relations
+
+The Discovery API exposes relations for UI agents:
+
+- Manifest (`GET /api/discovery/manifest`) includes `relations: RelationEdgeDto[]` sorted by `from`, then `fieldKey`.
+- Per-type schema (`GET /api/discovery/entities/:type/schema`) includes `relations: { outgoing, incoming }`, each sorted by `fieldKey`.
+
+```ts
+type RelationCardinality = 'one' | 'many';
+type OnDeleteMode = 'restrict' | 'setNull' | 'cascade';
+interface RelationEdgeDto {
+  from: string;
+  to: string;
+  fieldKey: string;
+  cardinality: RelationCardinality;
+  onDelete: OnDeleteMode;
+}
+```
+
+
+---
+
 ## Development Playbook
 
 1. **Plan** the module/feature: define routes, DTOs, and domain logic.
