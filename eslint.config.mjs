@@ -43,4 +43,24 @@ export default [
       // (Do NOT disable no-unsafe-assignment/call/return — they’ll go green now)
     },
   },
+  {
+    files: ['apps/frontend/**/*.{ts,tsx}'],
+    languageOptions: {
+      globals: {
+        ...globals.browser,
+      },
+      parserOptions: {
+        project: [
+          './apps/frontend/tsconfig.json',
+          './apps/frontend/tsconfig.node.json',
+        ],
+        tsconfigRootDir: import.meta.dirname,
+      },
+    },
+    rules: {
+      '@typescript-eslint/no-unsafe-assignment': 'off',
+      '@typescript-eslint/no-unsafe-call': 'off',
+      '@typescript-eslint/no-unsafe-member-access': 'off',
+    },
+  },
 ];

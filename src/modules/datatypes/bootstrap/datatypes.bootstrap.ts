@@ -141,13 +141,19 @@ export class DatatypesBootstrap implements OnModuleInit {
         continue;
       }
 
-      const setUpdate = this.buildUpdateDoc(seed, now);
-      await coll.updateOne(
-        { _id: existing._id } as Document,
-        { $set: setUpdate } as Document,
-      );
+      const needsUpdate = seedRequiresUpdate(existing, seed);
+      if (needsUpdate) {
+        const setUpdate = this.buildUpdateDoc(seed, now);
+        await coll.updateOne(
+          { _id: existing._id } as Document,
+          { $set: setUpdate } as Document,
+        );
+      }
       reconciled += 1;
       this.logger.log(`Reconciled seed datatype: ${seed.key}`);
+      if (!needsUpdate) {
+        this.logger.log(`Seed datatype already up to date: ${seed.key}`);
+      }
     }
 
     const lockedDocs = await coll
@@ -236,6 +242,111 @@ function cloneIndexForWrite(index: EntityIndexSpec): EntityIndexSpec {
     keys: { ...index.keys },
     ...(options ? { options } : {}),
   };
+}
+
+function seedRequiresUpdate(
+  existing: DataTypeDoc,
+  seed: DatatypeSeed,
+): boolean {
+  if (existing.label !== seed.label) return true;
+  if (existing.status !== seed.status) return true;
+  if (existing.version !== seed.version) return true;
+  if (existing.locked !== true) return true;
+  if (existing.storage?.mode !== seed.storage.mode) return true;
+  if (!fieldsEqual(existing.fields, seed.fields)) return true;
+  if (!indexesEqual(existing.indexes ?? [], seed.indexes)) return true;
+  return false;
+}
+
+function fieldsEqual(
+  current: ReadonlyArray<EntityField>,
+  seed: ReadonlyArray<EntityField>,
+): boolean {
+  if (current.length !== seed.length) {
+    return false;
+  }
+  return current.every(
+    (field, index) =>
+      stableStringify(normalizeField(field)) ===
+      stableStringify(normalizeField(seed[index])),
+  );
+}
+
+function indexesEqual(
+  current: ReadonlyArray<EntityIndexSpec>,
+  seed: ReadonlyArray<EntityIndexSpec>,
+): boolean {
+  if (current.length !== seed.length) {
+    return false;
+  }
+  return current.every(
+    (index, idx) =>
+      stableStringify(normalizeIndex(index)) ===
+      stableStringify(normalizeIndex(seed[idx])),
+  );
+}
+
+function normalizeField(field: EntityField): Record<string, unknown> {
+  const normalized: Record<string, unknown> = {
+    fieldKey: field.fieldKey,
+    required: field.required,
+    array: field.array,
+  };
+  if (field.unique !== undefined) {
+    normalized.unique = field.unique;
+  }
+  if (field.constraints !== undefined) {
+    normalized.constraints = field.constraints;
+  }
+  if (field.order !== undefined) {
+    normalized.order = field.order;
+  }
+  return normalized;
+}
+
+function normalizeIndex(index: EntityIndexSpec): Record<string, unknown> {
+  const normalized: Record<string, unknown> = {
+    keys: Object.entries(index.keys),
+  };
+  if (index.options) {
+    normalized.options = normalizeIndexOptions(index.options);
+  }
+  return normalized;
+}
+
+function normalizeIndexOptions(
+  options: NonNullable<EntityIndexSpec['options']>,
+): Record<string, unknown> {
+  return {
+    ...options,
+    ...(options.partialFilterExpression
+      ? { partialFilterExpression: options.partialFilterExpression }
+      : {}),
+  };
+}
+
+function stableStringify(value: unknown): string {
+  if (value === undefined) {
+    return 'undefined';
+  }
+  if (value === null) {
+    return 'null';
+  }
+  if (Array.isArray(value)) {
+    return `[${value.map((item) => stableStringify(item)).join(',')}]`;
+  }
+  if (value instanceof Date) {
+    return `"${value.toISOString()}"`;
+  }
+  if (value && typeof value === 'object') {
+    const entries = Object.entries(value as Record<string, unknown>).sort(
+      ([a], [b]) => (a < b ? -1 : a > b ? 1 : 0),
+    );
+    return `{${entries
+      .map(([key, val]) => `${JSON.stringify(key)}:${stableStringify(val)}`)
+      .join(',')}}`;
+  }
+  return JSON.stringify(value);
 }
 
 function isDuplicateKeyError(err: unknown): err is MongoServerError {

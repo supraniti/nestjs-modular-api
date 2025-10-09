@@ -134,6 +134,72 @@ describe('DatatypesBootstrap', () => {
     expect(updateSet?.updatedAt).toBeInstanceOf(Date);
   });
 
+  it('skips updates when the seed already matches the stored datatype', async () => {
+    process.env.CI = '0';
+    process.env.DATATYPES_BOOTSTRAP = '1';
+    const harness = createHarness();
+    const seed = DATATYPE_SEEDS[0];
+    const existing: DataTypeDocBase & { _id: ObjectId } = {
+      _id: new ObjectId(),
+      key: seed.key,
+      keyLower: seed.keyLower,
+      label: seed.label,
+      status: seed.status,
+      version: seed.version,
+      fields: seed.fields.map((field) => ({
+        fieldKey: field.fieldKey,
+        required: field.required,
+        array: field.array,
+        ...(field.unique !== undefined ? { unique: field.unique } : {}),
+        ...(field.constraints ? { constraints: { ...field.constraints } } : {}),
+        ...(field.order !== undefined ? { order: field.order } : {}),
+      })),
+      storage: { mode: seed.storage.mode },
+      indexes: seed.indexes.map((index) => ({
+        keys: { ...index.keys },
+        ...(index.options
+          ? {
+              options: {
+                ...index.options,
+                ...(index.options.partialFilterExpression
+                  ? {
+                      partialFilterExpression: {
+                        ...index.options.partialFilterExpression,
+                      },
+                    }
+                  : {}),
+              },
+            }
+          : {}),
+      })),
+      locked: true,
+      createdAt: new Date('2024-01-01T00:00:00Z'),
+      updatedAt: new Date('2024-01-02T00:00:00Z'),
+    };
+    harness.collection.findOne.mockResolvedValue(existing);
+    const lockedCursor = {
+      toArray: jest
+        .fn()
+        .mockResolvedValue([
+          { key: seed.key, keyLower: seed.keyLower, locked: true },
+        ]),
+    };
+    harness.collection.find.mockReturnValue(lockedCursor);
+
+    await harness.bootstrap.onModuleInit();
+
+    expect(harness.collection.updateOne).not.toHaveBeenCalled();
+    const logMessages = (
+      harness.logger.log.mock.calls as ReadonlyArray<[unknown, ...unknown[]]>
+    ).map(([message]) => String(message));
+    expect(logMessages).toEqual(
+      expect.arrayContaining([
+        `Reconciled seed datatype: ${seed.key}`,
+        `Seed datatype already up to date: ${seed.key}`,
+      ]),
+    );
+  });
+
   it('logs a warning for locked datatypes not in the seed set', async () => {
     process.env.CI = '0';
     process.env.DATATYPES_BOOTSTRAP = '1';
