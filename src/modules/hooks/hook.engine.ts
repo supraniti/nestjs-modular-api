@@ -46,9 +46,16 @@ export class HookEngine {
       typeKey,
       action: String(step.action),
     });
+    // Pass a deep-cloned copy of step args to avoid accidental mutation by actions
+    const clonedArgs: Record<string, unknown> | undefined = step.args
+      ? (JSON.parse(JSON.stringify(step.args)) as unknown as Record<
+          string,
+          unknown
+        >)
+      : undefined;
     const nextCtx: HookContext = {
       ...args.ctx,
-      meta: { ...args.ctx.meta, stepArgs: step.args },
+      meta: { ...args.ctx.meta, stepArgs: clonedArgs },
     };
     try {
       const out = await action.run(nextCtx);

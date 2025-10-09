@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Optional } from '@nestjs/common';
 import type { ListEntitiesQueryDto } from './dto/ListEntities.request.dto';
 import type {
   ListEntitiesResponseDto,
@@ -26,6 +26,8 @@ import {
   MongoServerError,
 } from 'mongodb';
 import { MongodbService } from '../mongodb/mongodb.service';
+import { HookEngine } from '../hooks/hook.engine';
+import type { HookContext } from '../hooks/types';
 
 /** Field/constraints shapes (phase 1) */
 type FieldType = 'string' | 'number' | 'boolean' | 'date' | 'enum';
@@ -83,7 +85,10 @@ function isHex24(s: string | undefined): s is string {
 
 @Injectable()
 export class EntitiesService {
-  constructor(private readonly mongo: MongodbService) {}
+  constructor(
+    private readonly mongo: MongodbService,
+    @Optional() private readonly hooks?: HookEngine,
+  ) {}
 
   /* -----------------------------
      Datatype loading & resolution
@@ -180,6 +185,15 @@ export class EntitiesService {
 
     const { filter, sort } = this.buildListQuery(dt, query);
 
+    // beforeList hook phase (read-only; safe no-op if hooks not wired)
+    if (this.hooks) {
+      const ctx: HookContext = {
+        payload: { query },
+        meta: { typeKey: dt.keyLower },
+      };
+      await this.hooks.run({ typeKey: dt.keyLower, phase: 'beforeList', ctx });
+    }
+
     const total = await col.countDocuments(filter);
     const cursor = col
       .find(filter)
@@ -192,6 +206,16 @@ export class EntitiesService {
       this.mapDocToEntityItem(dt, doc),
     );
 
+    // afterList hook phase (read-only; safe no-op if hooks not wired)
+    if (this.hooks) {
+      const ctx: HookContext = {
+        payload: { query },
+        result: { items, page, pageSize, total },
+        meta: { typeKey: dt.keyLower },
+      };
+      await this.hooks.run({ typeKey: dt.keyLower, phase: 'afterList', ctx });
+    }
+
     return { items, page, pageSize, total };
   }
 
@@ -203,13 +227,34 @@ export class EntitiesService {
     const col = await this.getEntitiesCollection(dt);
     const { discriminator } = this.resolveCollectionInfo(dt);
 
+    // beforeGet hook phase (read-only; safe no-op if hooks not wired)
+    if (this.hooks) {
+      const ctx: HookContext = {
+        payload: { id },
+        meta: { typeKey: dt.keyLower },
+      };
+      await this.hooks.run({ typeKey: dt.keyLower, phase: 'beforeGet', ctx });
+    }
+
     const filter: Filter<Document> = discriminator
       ? { _id, [discriminator.field]: discriminator.value }
       : { _id };
 
     const doc = await col.findOne(filter);
     if (!doc) throw new EntityNotFoundError(dt.keyLower, id);
-    return this.mapDocToEntityItem(dt, doc);
+    const mapped = this.mapDocToEntityItem(dt, doc);
+
+    // afterGet hook phase (read-only; safe no-op if hooks not wired)
+    if (this.hooks) {
+      const ctx: HookContext = {
+        payload: { id },
+        result: mapped,
+        meta: { typeKey: dt.keyLower },
+      };
+      await this.hooks.run({ typeKey: dt.keyLower, phase: 'afterGet', ctx });
+    }
+
+    return mapped;
   }
 
   async createEntity(

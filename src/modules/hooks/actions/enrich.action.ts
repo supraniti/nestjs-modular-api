@@ -6,7 +6,7 @@ export class EnrichAction implements HookAction<unknown, unknown> {
   id: HookActionId = 'enrich' as unknown as HookActionId;
 
   run(ctx: HookContext<unknown, unknown>): HookContext<unknown, unknown> {
-    // No-op by default
-    return ctx;
+    // No-op by default; stamp meta for observability in tests
+    return { ...ctx, meta: { ...ctx.meta, enriched: true } };
   }
 }
