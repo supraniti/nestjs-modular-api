@@ -1,19 +1,19 @@
 import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import type { Collection, Document, MongoServerError } from 'mongodb';
+
+import { MongoActionError } from '../../../lib/errors/MongoActionError';
 import { MongodbService } from '../../mongodb/mongodb.service';
 import {
   DATATYPES_COLLECTION,
+  DATATYPE_SEEDS,
   type DataTypeDoc,
   type DataTypeDocBase,
+  type DatatypeSeed,
+  type DatatypeSeedField,
   type EntityField,
   type EntityIndexSpec,
-} from '@lib/datatypes';
-import {
-  DATATYPE_SEEDS,
-  type DatatypeSeed,
   isDatatypeSeedKey,
-} from '../internal/datatypes.seeds';
-import { MongoActionError } from '../../../lib/errors/MongoActionError';
+} from '../internal';
 
 interface SeedSyncStats {
   inserted: number;
@@ -211,7 +211,7 @@ export class DatatypesBootstrap implements OnModuleInit {
   }
 }
 
-function cloneFieldForWrite(field: EntityField): EntityField {
+function cloneFieldForWrite(field: DatatypeSeedField): EntityField {
   return {
     fieldKey: field.fieldKey,
     required: field.required,

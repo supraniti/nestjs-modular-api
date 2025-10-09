@@ -4,25 +4,23 @@
     "label": "Post",
     "status": "published",
     "version": 1,
+    "storage": { "mode": "single" },
     "fields": [
       {
-        "fieldKey": "string",
+        "fieldKey": "title",
         "required": true,
         "array": false,
         "unique": false,
-        "constraints": { "minLength": 1, "maxLength": 120 },
         "order": 0
       },
       {
-        "fieldKey": "string",
+        "fieldKey": "content",
         "required": true,
         "array": false,
         "unique": false,
-        "constraints": { "minLength": 1 },
         "order": 1
       }
     ],
-    "storage": { "mode": "single" },
     "indexes": []
   }
 ]
