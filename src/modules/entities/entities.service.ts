@@ -28,6 +28,7 @@ import {
 import { MongodbService } from '../mongodb/mongodb.service';
 import { HookEngine } from '../hooks/hook.engine';
 import type { HookContext } from '../hooks/types';
+import { AppError } from '../../lib/errors/AppError';
 
 /** Field/constraints shapes (phase 1) */
 type FieldType = 'string' | 'number' | 'boolean' | 'date' | 'enum';
@@ -265,6 +266,26 @@ export class EntitiesService {
     const col = await this.getEntitiesCollection(dt);
     const { discriminator } = this.resolveCollectionInfo(dt);
 
+    // Hooks: beforeCreate (validation, etc.)
+    if (this.hooks) {
+      const ctx: HookContext = {
+        payload,
+        meta: { typeKey: dt.keyLower },
+      };
+      try {
+        await this.hooks.run({
+          typeKey: dt.keyLower,
+          phase: 'beforeCreate',
+          ctx,
+        });
+      } catch (err) {
+        // Unwrap domain errors propagated via HookEngine wrapper
+        const cause = (err as { cause?: unknown })?.cause;
+        if (cause && cause instanceof AppError) throw cause;
+        throw err;
+      }
+    }
+
     // Validate full payload
     const validation = this.validatePayload(dt, payload, { mode: 'create' });
     if (!validation.ok)
@@ -305,6 +326,25 @@ export class EntitiesService {
 
     const col = await this.getEntitiesCollection(dt);
     const { discriminator } = this.resolveCollectionInfo(dt);
+
+    // Hooks: beforeUpdate (validation, etc.)
+    if (this.hooks) {
+      const ctx: HookContext = {
+        payload: changes,
+        meta: { typeKey: dt.keyLower },
+      };
+      try {
+        await this.hooks.run({
+          typeKey: dt.keyLower,
+          phase: 'beforeUpdate',
+          ctx,
+        });
+      } catch (err) {
+        const cause = (err as { cause?: unknown })?.cause;
+        if (cause && cause instanceof AppError) throw cause;
+        throw err;
+      }
+    }
 
     // Validate only provided fields (required not enforced)
     const validation = this.validatePayload(dt, changes, { mode: 'update' });

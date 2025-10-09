@@ -23,6 +23,10 @@
         "order": 1
       }
     ],
-    "indexes": []
+    "indexes": [],
+    "hooks": {
+      "beforeCreate": [ { "action": "validate" } ],
+      "beforeUpdate": [ { "action": "validate" } ]
+    }
   }
 ]

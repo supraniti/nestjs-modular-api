@@ -5,6 +5,7 @@ import { HookStore } from '../hook.store';
 import type { HookAction, HookContext } from '../types';
 import { ValidateAction } from '../actions/validate.action';
 import { EnrichAction } from '../actions/enrich.action';
+import { SchemaRegistry } from '../schema.registry';
 
 describe('HookEngine', () => {
   async function makeEngine() {
@@ -15,6 +16,21 @@ describe('HookEngine', () => {
         HookEngine,
         ValidateAction,
         EnrichAction,
+        {
+          provide: SchemaRegistry,
+          useValue: {
+            getCreate: () =>
+              Promise.resolve({
+                schema: {},
+                validate: (() => true) as never,
+              }),
+            getUpdate: () =>
+              Promise.resolve({
+                schema: {},
+                validate: (() => true) as never,
+              }),
+          },
+        },
       ],
     }).compile();
     return {

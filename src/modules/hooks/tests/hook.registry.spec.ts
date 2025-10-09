@@ -2,11 +2,31 @@ import { Test } from '@nestjs/testing';
 import { HookRegistry } from '../hook.registry';
 import { ValidateAction } from '../actions/validate.action';
 import { EnrichAction } from '../actions/enrich.action';
+import { SchemaRegistry } from '../schema.registry';
 
 describe('HookRegistry', () => {
   it('pre-registers built-ins and get returns them', async () => {
     const module = await Test.createTestingModule({
-      providers: [HookRegistry, ValidateAction, EnrichAction],
+      providers: [
+        HookRegistry,
+        ValidateAction,
+        EnrichAction,
+        {
+          provide: SchemaRegistry,
+          useValue: {
+            getCreate: () =>
+              Promise.resolve({
+                schema: {},
+                validate: (() => true) as never,
+              }),
+            getUpdate: () =>
+              Promise.resolve({
+                schema: {},
+                validate: (() => true) as never,
+              }),
+          },
+        },
+      ],
     }).compile();
 
     const registry = module.get(HookRegistry);
@@ -22,7 +42,26 @@ describe('HookRegistry', () => {
 
   it('prevents duplicate registration', async () => {
     const module = await Test.createTestingModule({
-      providers: [HookRegistry, ValidateAction, EnrichAction],
+      providers: [
+        HookRegistry,
+        ValidateAction,
+        EnrichAction,
+        {
+          provide: SchemaRegistry,
+          useValue: {
+            getCreate: () =>
+              Promise.resolve({
+                schema: {},
+                validate: (() => true) as never,
+              }),
+            getUpdate: () =>
+              Promise.resolve({
+                schema: {},
+                validate: (() => true) as never,
+              }),
+          },
+        },
+      ],
     }).compile();
 
     const registry = module.get(HookRegistry);

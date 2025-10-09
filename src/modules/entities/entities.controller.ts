@@ -42,7 +42,22 @@ export class EntitiesController {
       err instanceof EntityNotFoundError ||
       err instanceof CollectionResolutionError
     ) {
-      // Use default Nest error body: { statusCode, message, error: 'Bad Request' }
+      // If validation details from hooks are present, return structured body
+      if (
+        err instanceof ValidationError &&
+        err.details &&
+        typeof err.details === 'object' &&
+        err.details['issues']
+      ) {
+        const d = err.details;
+        throw new BadRequestException({
+          error: 'ValidationError',
+          typeKey: err.typeKey,
+          phase: (d['phase'] as string) ?? 'unknown',
+          issues: d['issues'],
+        });
+      }
+      // Default Nest error body: { statusCode, message, error: 'Bad Request' }
       throw new BadRequestException((err as Error).message);
     }
     throw err;

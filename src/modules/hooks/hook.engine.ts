@@ -18,7 +18,10 @@ export class HookEngine {
     ctx: HookContext<unknown, unknown>;
   }): Promise<HookContext<unknown, unknown>> {
     const { typeKey, phase } = params;
-    let ctx = params.ctx;
+    let ctx: HookContext = {
+      ...params.ctx,
+      meta: { ...params.ctx.meta, phase },
+    };
 
     const steps = this.store.getFlow(typeKey, phase);
     for (const step of steps) {
