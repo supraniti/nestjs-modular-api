@@ -65,21 +65,27 @@ export class EnrichAction implements HookAction<unknown, unknown> {
       throw new ValidationHttpException(details);
     }
     const withKeys = (stepArgs['with'] as string[]) ?? [];
-    const select = (stepArgs['select'] as Record<string, string[]>) ?? {};
-    let maxDepth = Math.max(0, Number(stepArgs['maxDepth'] ?? 0));
+    const selectFields = (stepArgs['select'] as string[] | undefined) ?? undefined;
+    const asMap = (stepArgs['as'] as Record<string, string> | undefined) ?? {};
+    let maxDepth = Math.max(0, Number(stepArgs['depth'] ?? 0));
     if (maxDepth > 5) {
-      this.logger.debug?.(`maxDepth ${maxDepth} > 5; clamping to 5`);
+      this.logger.debug?.(`depth ${maxDepth} > 5; clamping to 5`);
       maxDepth = 5;
     }
-    const paths =
-      (stepArgs['paths'] as Record<string, string[]> | undefined) ?? undefined;
 
     // Only operate on afterGet/afterList with result present
     if (phase !== 'afterGet' && phase !== 'afterList') return ctx;
     if (ctx.result == null) return ctx;
 
     // Load current datatype to inspect ref constraints
-    await this.loadDatatype(typeKey); // ensure datatype exists; specific fields loaded per-node below
+    const rootDt = await this.loadDatatype(typeKey); // ensure datatype exists
+    for (const w of withKeys) {
+      if (!this.findField(rootDt, w)) {
+        throw new ValidationHttpException([
+          { path: '/', keyword: 'field', message: `ENRICH_BAD_FIELD: ${w}` },
+        ]);
+      }
+    }
 
     const items: Record<string, unknown>[] = Array.isArray(ctx.result)
       ? (ctx.result as Record<string, unknown>[])
@@ -128,8 +134,7 @@ export class EnrichAction implements HookAction<unknown, unknown> {
 
     // Depth 0 attachments
     for (let depth = 0; depth <= maxDepth; depth++) {
-      const fieldsAtDepth =
-        depth === 0 ? withKeys : (paths?.[String(depth)] ?? withKeys);
+      const fieldsAtDepth = withKeys;
       if (!fieldsAtDepth || fieldsAtDepth.length === 0) {
         current = [];
         break;
@@ -150,7 +155,8 @@ export class EnrichAction implements HookAction<unknown, unknown> {
           const targetType =
             (constraints?.['ref'] as string | undefined) || undefined;
           if (!targetType) continue;
-          const outKey = `${fieldKey}Resolved`;
+          const outKey =
+            (asMap as Record<string, string>)[fieldKey] ?? fieldKey;
           const val = node.doc[fieldKey];
           if (val == null) {
             node.doc[outKey] = Array.isArray(val) ? [] : null;
@@ -203,11 +209,14 @@ export class EnrichAction implements HookAction<unknown, unknown> {
         for (const n of current) setTruncated(n.doc);
       }
 
-      // Fetch
+      // Fetch in batches
       for (const [target, ids] of plan.entries()) {
-        const toFetch = Array.from(ids).filter((id) => !isVisited(target, id));
-        await this.resolveBatch(target, toFetch);
-        for (const id of toFetch) markVisited(target, id);
+        const list = Array.from(ids).filter((id) => !isVisited(target, id));
+        for (let i = 0; i < list.length; i += 200) {
+          const chunk = list.slice(i, i + 200);
+          await this.resolveBatch(target, chunk);
+          for (const id of chunk) markVisited(target, id);
+        }
       }
 
       // Attach and collect next depth nodes
@@ -223,8 +232,8 @@ export class EnrichAction implements HookAction<unknown, unknown> {
           const targetType =
             (constraints?.['ref'] as string | undefined) || undefined;
           if (!targetType) continue;
-          const pick = select[targetType];
-          const outKey = `${fieldKey}Resolved`;
+          const outKey =
+            (asMap as Record<string, string>)[fieldKey] ?? fieldKey;
           const val = node.doc[fieldKey];
           if (val == null) {
             node.doc[outKey] = Array.isArray(val) ? [] : null;
@@ -234,15 +243,17 @@ export class EnrichAction implements HookAction<unknown, unknown> {
             const resolved = (val as unknown[])
               .map((v) => this.readFromCache(targetType, this.asHexId(v)))
               .filter((x): x is Record<string, unknown> => !!x)
-              .map((x) => (pick ? this.pickFields(x, pick) : x));
+              .map((x) =>
+                selectFields ? this.pickFields(x, selectFields) : x,
+              );
             node.doc[outKey] = resolved;
             for (const child of resolved)
               nextNodes.push({ typeKey: targetType, doc: child });
           } else {
             const resolved = this.readFromCache(targetType, this.asHexId(val));
             const out = resolved
-              ? pick
-                ? this.pickFields(resolved, pick)
+              ? selectFields
+                ? this.pickFields(resolved, selectFields)
                 : resolved
               : null;
             node.doc[outKey] = out;
