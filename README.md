@@ -322,7 +322,7 @@ Contributions (cross-type hooks)
 
 Example with contributions:
 
-```
+```json
 {
   "key": "taxonomy",
   "label": "Taxonomy",
@@ -337,14 +337,14 @@ Example with contributions:
       "target": "post",
       "hooks": {
         "beforeCreate": [{ "action": "validate", "args": { "schema": "taxonomy.rules" } }],
-        "afterGet":    [{ "action": "enrich",   "args": { "with": ["taxonomies"] } }]
+        "afterGet": [{ "action": "enrich", "args": { "with": ["taxonomies"] } }]
       }
     }
   ]
 }
 ```
 
-Bootstrap summary log example: `HookStore: registered hooks for 2 types (3 own steps, 2 contributed steps)` and per-contribution debug lines like `Contrib: taxonomy → post.beforeCreate (+1 step)`.
+Bootstrap summary log example: `HookStore: registered hooks for 2 own types (3 total affected) (3 own steps, 2 contributed steps)` and per-contribution debug lines like `Contrib: taxonomy -> post.beforeCreate (+1 step)`.
 
 ### Discovery Module (API Explorer Support)
 

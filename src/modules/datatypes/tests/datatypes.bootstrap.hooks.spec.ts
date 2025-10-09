@@ -79,7 +79,7 @@ function createHarness(): {
     aggregate: jest.Mock;
   };
   logger: { log: jest.Mock; warn: jest.Mock; error: jest.Mock };
-  hookStore: { applyPatch: jest.Mock };
+  hookStore: { applyPatch: jest.Mock; reset: jest.Mock };
 } {
   const collectionMocks = {
     createIndex: jest.fn().mockResolvedValue(undefined),
@@ -103,7 +103,7 @@ function createHarness(): {
   const mongo = {
     getDb: jest.fn().mockResolvedValue(db),
   };
-  const hookStore = { applyPatch: jest.fn() };
+  const hookStore = { applyPatch: jest.fn(), reset: jest.fn() };
 
   const bootstrap = new DatatypesBootstrap(
     mongo as unknown as MongodbService,

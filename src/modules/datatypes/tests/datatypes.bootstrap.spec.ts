@@ -252,7 +252,7 @@ export type Harness = {
     warn: jest.Mock;
     error: jest.Mock;
   };
-  hookStore: { applyPatch: jest.Mock };
+  hookStore: { applyPatch: jest.Mock; reset: jest.Mock };
 };
 
 export function createHarness(): Harness {
@@ -279,7 +279,7 @@ export function createHarness(): Harness {
     getDb: jest.fn().mockResolvedValue(db),
   };
 
-  const hookStore = { applyPatch: jest.fn(), getFlow: jest.fn() };
+  const hookStore = { applyPatch: jest.fn(), getFlow: jest.fn(), reset: jest.fn() };
   const bootstrap = new DatatypesBootstrap(
     mongo as unknown as MongodbService,
     hookStore as unknown as import('../../hooks/hook.store').HookStore,
