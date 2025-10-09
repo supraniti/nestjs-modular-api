@@ -7,7 +7,7 @@
     "storage": { "mode": "single" },
     "fields": [
       {
-        "fieldKey": "title",
+        "fieldKey": "string",
         "required": true,
         "array": false,
         "unique": false,
@@ -15,7 +15,7 @@
         "order": 0
       },
       {
-        "fieldKey": "content",
+        "fieldKey": "string",
         "required": true,
         "array": false,
         "unique": false,
@@ -24,8 +24,5 @@
       }
     ],
     "indexes": []
-        "order": 1
-      }
-    ]
   }
 ]

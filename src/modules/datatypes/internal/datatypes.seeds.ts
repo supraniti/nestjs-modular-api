@@ -8,30 +8,22 @@ import { isKebabCaseKey, normalizeKeyLower } from '@lib/fields';
 
 import rawSeedData from '../../../Data/datatypes.seeds.json';
 
-type PlainObject = Readonly<Record<string, unknown>>;
-
-import { isKebabCaseKey, normalizeKeyLower } from '@lib/fields';
-import type { EntityField, EntityIndexSpec, StorageMode } from '@lib/datatypes';
-
-import rawSeedData from '../../../Data/datatypes.seeds.json';
-
-export type DatatypeSeedField = Pick<
-  EntityField,
-  'fieldKey' | 'required' | 'array' | 'unique' | 'constraints' | 'order'
->;
-
+/**
+ * Shape of a datatype seed document after normalization (no timestamps/_id yet).
+ */
 export interface DatatypeSeed {
   readonly key: string;
   readonly keyLower: string;
   readonly label: string;
-  readonly version: number;
   readonly status: 'draft' | 'published';
+  readonly version: number;
+  readonly fields: ReadonlyArray<EntityField>;
   readonly storage: { readonly mode: StorageMode };
-  readonly fields: ReadonlyArray<DatatypeSeedField>;
   readonly indexes: ReadonlyArray<EntityIndexSpec>;
   readonly locked: true;
 }
 
+type PlainObject = Readonly<Record<string, unknown>>;
 type DatatypeSeedLiteral = Readonly<Record<string, unknown>>;
 
 type DatatypeSeedFieldLiteral = Readonly<{
@@ -43,11 +35,7 @@ type DatatypeSeedFieldLiteral = Readonly<{
   order?: unknown;
 }>;
 
-type IndexLiteral = Readonly<{
-  keys?: unknown;
-  options?: unknown;
-}>;
-
+type IndexLiteral = Readonly<{ keys?: unknown; options?: unknown }>;
 type IndexOptionsLiteral = Readonly<{
   unique?: unknown;
   name?: unknown;
@@ -95,39 +83,12 @@ function parseSeedLiteral(
   entry: unknown,
   index: number,
 ): {
-type PlainObject = Readonly<Record<string, unknown>>;
-
-type DatatypeSeedFieldLiteral = Readonly<{
-  fieldKey: string;
-  required?: boolean;
-  array?: boolean;
-  unique?: boolean;
-  constraints?: PlainObject;
-  order?: number;
-}>;
-
-type DatatypeSeedLiteral = Readonly<{
-  key: string;
-  label: string;
-  version?: number;
-  status?: 'draft' | 'published';
-  storage?: Readonly<{ mode?: StorageMode }>;
-  fields: ReadonlyArray<DatatypeSeedFieldLiteral>;
-  indexes?: ReadonlyArray<
-    Readonly<{
-      keys: Readonly<Record<string, 1 | -1 | 'text'>>;
-      options?: PlainObject;
-    }>
-  >;
-}>;
-
-type NormalizedDatatypeSeedLiteral = Readonly<{
   key: string;
   label: string;
   version: number;
   status: 'draft' | 'published';
   storage: { readonly mode: StorageMode };
-  fields: ReadonlyArray<DatatypeSeedField>;
+  fields: ReadonlyArray<EntityField>;
   indexes: ReadonlyArray<EntityIndexSpec>;
 } {
   if (!isPlainObject(entry)) {
@@ -135,6 +96,7 @@ type NormalizedDatatypeSeedLiteral = Readonly<{
   }
 
   const literal = entry as DatatypeSeedLiteral;
+
   const rawKey = literal.key;
   if (typeof rawKey !== 'string' || rawKey.trim().length === 0) {
     throw new Error(
@@ -142,9 +104,8 @@ type NormalizedDatatypeSeedLiteral = Readonly<{
     );
   }
   const key = rawKey.trim();
-  if (!isKebabCaseKey(key)) {
+  if (!isKebabCaseKey(key))
     throw new Error(`Datatype seed "${key}" must use kebab-case keys.`);
-  }
 
   const label = literal.label;
   if (typeof label !== 'string' || label.trim().length === 0) {
@@ -167,7 +128,6 @@ type NormalizedDatatypeSeedLiteral = Readonly<{
   const status = rawStatus;
 
   const storageMode = parseStorageMode(literal.storage, key);
-
   const fields = parseFields(literal.fields, key);
   const indexes = parseIndexes(literal.indexes, key);
 
@@ -183,39 +143,26 @@ type NormalizedDatatypeSeedLiteral = Readonly<{
 }
 
 function parseStorageMode(value: unknown, key: string): StorageMode {
-  if (value === undefined) {
-    return 'single';
-  }
-  if (!isPlainObject(value)) {
+  if (value === undefined) return 'single';
+  if (!isPlainObject(value))
     throw new Error(`Datatype seed "${key}" storage must be an object.`);
-  }
-
   const mode = value.mode;
   if (typeof mode !== 'string' || !isStorageMode(mode)) {
     throw new Error(
       `Datatype seed "${key}" has invalid storage.mode "${String(mode)}".`,
     );
   }
-
   return mode;
 }
 
-function parseFields(
-  value: unknown,
-  key: string,
-): ReadonlyArray<DatatypeSeedField> {
+function parseFields(value: unknown, key: string): ReadonlyArray<EntityField> {
   if (!Array.isArray(value)) {
     throw new Error(`Datatype seed "${key}" must declare a "fields" array.`);
   }
-
   return value.map((field, index) => parseField(field, key, index));
 }
 
-function parseField(
-  field: unknown,
-  key: string,
-  index: number,
-): DatatypeSeedField {
+function parseField(field: unknown, key: string, index: number): EntityField {
   if (!isPlainObject(field)) {
     throw new Error(
       `Datatype seed "${key}" field at index ${index} must be an object.`,
@@ -232,33 +179,37 @@ function parseField(
   const fieldKey = rawFieldKey.trim();
   if (!isKebabCaseKey(fieldKey)) {
     throw new Error(
-      `Datatype seed "${key}" field "${fieldKey}" must use kebab-case fieldKey values.`,
+      `Datatype seed "${key}" field "${fieldKey}" must use kebab-case fieldKey.`,
     );
   }
 
-  const required = literal.required === undefined ? false : literal.required;
+  const required =
+    literal.required === undefined
+      ? false
+      : (literal.required as unknown as boolean);
   if (typeof required !== 'boolean') {
     throw new Error(
-      `Datatype seed "${key}" field "${fieldKey}" must declare boolean "required" when provided.`,
+      `Datatype seed "${key}" field "${fieldKey}" must declare boolean "required".`,
     );
   }
 
-  const array = literal.array === undefined ? false : literal.array;
+  const array =
+    literal.array === undefined ? false : (literal.array as unknown as boolean);
   if (typeof array !== 'boolean') {
     throw new Error(
-      `Datatype seed "${key}" field "${fieldKey}" must declare boolean "array" when provided.`,
+      `Datatype seed "${key}" field "${fieldKey}" must declare boolean "array".`,
     );
   }
 
   if (literal.unique !== undefined && typeof literal.unique !== 'boolean') {
     throw new Error(
-      `Datatype seed "${key}" field "${fieldKey}" must declare boolean "unique" when provided.`,
+      `Datatype seed "${key}" field "${fieldKey}" unique must be boolean.`,
     );
   }
 
   if (literal.order !== undefined && typeof literal.order !== 'number') {
     throw new Error(
-      `Datatype seed "${key}" field "${fieldKey}" must declare numeric "order" when provided.`,
+      `Datatype seed "${key}" field "${fieldKey}" order must be number.`,
     );
   }
 
@@ -267,7 +218,7 @@ function parseField(
     !isPlainObject(literal.constraints)
   ) {
     throw new Error(
-      `Datatype seed "${key}" field "${fieldKey}" must declare object "constraints" when provided.`,
+      `Datatype seed "${key}" field "${fieldKey}" constraints must be an object when provided.`,
     );
   }
 
@@ -289,15 +240,12 @@ function parseIndexes(
   value: unknown,
   key: string,
 ): ReadonlyArray<EntityIndexSpec> {
-  if (value === undefined) {
-    return [];
-  }
+  if (value === undefined) return [];
   if (!Array.isArray(value)) {
     throw new Error(
       `Datatype seed "${key}" indexes must be an array when provided.`,
     );
   }
-
   return value.map((idx, index) => parseIndex(idx, key, index));
 }
 
@@ -358,17 +306,17 @@ function parseIndexOptions(
 ): EntityIndexSpec['options'] {
   if (literal.unique !== undefined && typeof literal.unique !== 'boolean') {
     throw new Error(
-      `Datatype seed "${key}" index option "unique" must be boolean when provided.`,
+      `Datatype seed "${key}" index option "unique" must be boolean.`,
     );
   }
   if (literal.name !== undefined && typeof literal.name !== 'string') {
     throw new Error(
-      `Datatype seed "${key}" index option "name" must be a string when provided.`,
+      `Datatype seed "${key}" index option "name" must be string.`,
     );
   }
   if (literal.sparse !== undefined && typeof literal.sparse !== 'boolean') {
     throw new Error(
-      `Datatype seed "${key}" index option "sparse" must be boolean when provided.`,
+      `Datatype seed "${key}" index option "sparse" must be boolean.`,
     );
   }
   if (
@@ -376,7 +324,7 @@ function parseIndexOptions(
     !isPlainObject(literal.partialFilterExpression)
   ) {
     throw new Error(
-      `Datatype seed "${key}" index option "partialFilterExpression" must be an object when provided.`,
+      `Datatype seed "${key}" index option "partialFilterExpression" must be an object.`,
     );
   }
 
@@ -394,7 +342,7 @@ function parseIndexOptions(
   });
 }
 
-function cloneField(field: DatatypeSeedField): DatatypeSeedField {
+function cloneField(field: EntityField): EntityField {
   return Object.freeze({
     fieldKey: field.fieldKey,
     required: field.required,
@@ -436,193 +384,4 @@ export function isDatatypeSeedKey(key: string): boolean {
 
 function isPlainObject(value: unknown): value is PlainObject {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
-  storage: Readonly<{ mode: StorageMode }>;
-  fields: ReadonlyArray<DatatypeSeedFieldLiteral>;
-  indexes: ReadonlyArray<
-    Readonly<{
-      keys: Readonly<Record<string, 1 | -1 | 'text'>>;
-      options?: PlainObject;
-    }>
-  >;
-}>;
-
-function assertPlainObject(
-  value: unknown,
-  context: string,
-): asserts value is PlainObject {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) {
-    throw new Error(`${context} must be a plain object.`);
-  }
-}
-
-function coerceSeedLiterals(
-  data: unknown,
-): ReadonlyArray<NormalizedDatatypeSeedLiteral> {
-  if (!Array.isArray(data)) {
-    throw new Error('Datatype seed JSON must be an array.');
-  }
-
-  return data.map((entry, index) => {
-    if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
-      throw new Error(`Datatype seed at index ${index} must be an object.`);
-    }
-
-    const literal = entry as Partial<DatatypeSeedLiteral>;
-    if (typeof literal.key !== 'string' || literal.key.length === 0) {
-      throw new Error(
-        `Datatype seed at index ${index} is missing a string "key".`,
-      );
-    }
-
-    if (typeof literal.label !== 'string' || literal.label.length === 0) {
-      throw new Error(
-        `Datatype seed "${literal.key}" is missing a string "label".`,
-      );
-    }
-
-    if (!Array.isArray(literal.fields)) {
-      throw new Error(
-        `Datatype seed "${literal.key}" must declare a "fields" array.`,
-      );
-    }
-
-    const fields: DatatypeSeedLiteral['fields'] = literal.fields.map(
-      (field, fieldIndex) => {
-        if (!field || typeof field !== 'object' || Array.isArray(field)) {
-          throw new Error(
-            `Field at index ${fieldIndex} for seed "${literal.key}" must be an object.`,
-          );
-        }
-        const f = field as DatatypeSeedFieldLiteral;
-        if (typeof f.fieldKey !== 'string' || f.fieldKey.length === 0) {
-          throw new Error(
-            `Field at index ${fieldIndex} for seed "${literal.key}" is missing a string "fieldKey".`,
-          );
-        }
-        if (f.constraints !== undefined) {
-          assertPlainObject(
-            f.constraints,
-            `Field constraints for "${literal.key}"`,
-          );
-        }
-        if (f.order !== undefined && typeof f.order !== 'number') {
-          throw new Error(
-            `Field "${f.fieldKey}" on seed "${literal.key}" must have a numeric "order" if provided.`,
-          );
-        }
-        return Object.freeze({ ...f });
-      },
-    );
-
-    const indexes: DatatypeSeedLiteral['indexes'] | undefined =
-      literal.indexes?.map((idx, idxIndex) => {
-        if (!idx || typeof idx !== 'object' || Array.isArray(idx)) {
-          throw new Error(
-            `Index at index ${idxIndex} for seed "${literal.key}" must be an object.`,
-          );
-        }
-        const spec = idx as {
-          keys?: Record<string, 1 | -1 | 'text'>;
-          options?: PlainObject;
-        };
-        if (!spec.keys || typeof spec.keys !== 'object') {
-          throw new Error(
-            `Index spec ${idxIndex} for seed "${literal.key}" must define "keys".`,
-          );
-        }
-        if (spec.options !== undefined) {
-          assertPlainObject(
-            spec.options,
-            `Index options for seed "${literal.key}"`,
-          );
-        }
-        return Object.freeze({
-          keys: { ...spec.keys },
-          options: spec.options ? { ...spec.options } : undefined,
-        });
-      });
-
-    const version = literal.version === undefined ? 1 : Number(literal.version);
-    if (!Number.isInteger(version) || version < 1) {
-      throw new Error(
-        `Datatype seed "${literal.key}" must have an integer version >= 1.`,
-      );
-    }
-
-    const status = literal.status ?? 'draft';
-    if (status !== 'draft' && status !== 'published') {
-      throw new Error(
-        `Datatype seed "${literal.key}" has invalid status "${String(status)}".`,
-      );
-    }
-
-    const storageMode = literal.storage?.mode ?? 'single';
-    if (storageMode !== 'single' && storageMode !== 'perType') {
-      throw new Error(
-        `Datatype seed "${literal.key}" has invalid storage mode "${String(storageMode)}".`,
-      );
-    }
-
-    return Object.freeze({
-      key: literal.key,
-      label: literal.label,
-      version,
-      status,
-      storage: Object.freeze({ mode: storageMode }),
-      fields,
-      indexes: Object.freeze(
-        indexes ?? [],
-      ) as NormalizedDatatypeSeedLiteral['indexes'],
-    });
-  });
-}
-
-const BASE_SEEDS: ReadonlyArray<NormalizedDatatypeSeedLiteral> = Object.freeze(
-  coerceSeedLiterals(rawSeedData),
-);
-
-export const DATATYPE_SEEDS: ReadonlyArray<DatatypeSeed> = Object.freeze(
-  BASE_SEEDS.map((seed) => {
-    const key = seed.key;
-    if (!isKebabCaseKey(key)) {
-      throw new Error(`Invalid datatype seed key (must be kebab-case): ${key}`);
-    }
-
-    const fields = Object.freeze(
-      seed.fields.map((f, index) => ({
-        fieldKey: f.fieldKey,
-        required: f.required ?? false,
-        array: f.array ?? false,
-        unique: f.unique === true ? true : undefined,
-        constraints: f.constraints ? { ...f.constraints } : undefined,
-        order: f.order !== undefined ? f.order : index,
-      })),
-    ) as ReadonlyArray<DatatypeSeedField>;
-
-    const indexes = Object.freeze(
-      (seed.indexes ?? []).map((idx) => ({
-        keys: { ...idx.keys },
-        options: idx.options ? { ...idx.options } : undefined,
-      })),
-    ) as ReadonlyArray<EntityIndexSpec>;
-
-    const normalized: DatatypeSeed = {
-      key,
-      keyLower: normalizeKeyLower(key),
-      label: seed.label,
-      version: seed.version,
-      status: seed.status,
-      storage: { mode: seed.storage.mode },
-      fields,
-      indexes,
-      locked: true,
-    };
-
-    return Object.freeze(normalized);
-  }),
-);
-
-export function isDatatypeSeedKey(key: string): boolean {
-  const lower = normalizeKeyLower(key);
-  return DATATYPE_SEEDS.some((s) => s.keyLower === lower);
 }

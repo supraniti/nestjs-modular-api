@@ -1,8 +1,7 @@
 import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import type { Collection, Document, MongoServerError } from 'mongodb';
-import type { Collection, Document } from 'mongodb';
 
-import { MongoActionError } from '../../../lib/errors/MongoActionError';
+import { MongoActionError } from '@lib/errors/MongoActionError';
 import { MongodbService } from '../../mongodb/mongodb.service';
 import {
   DATATYPES_COLLECTION,
@@ -10,7 +9,6 @@ import {
   type DataTypeDoc,
   type DataTypeDocBase,
   type DatatypeSeed,
-  type DatatypeSeedField,
   type EntityField,
   type EntityIndexSpec,
   isDatatypeSeedKey,
@@ -25,21 +23,6 @@ interface SeedSyncStats {
  * Ensures baseline datatype seeds and indexes exist for local development.
  * - Skips in CI or when explicitly disabled.
  * - Idempotently reconciles seed documents.
-  type DataTypeDocBase,
-  type EntityField,
-  type EntityIndexSpec,
-} from '../internal';
-import {
-  DATATYPE_SEEDS,
-  type DatatypeSeed,
-  isDatatypeSeedKey,
-} from '../internal';
-
-/**
- * Seed & index bootstrap for the `datatypes` collection.
- * - Ensures a unique index on `keyLower`.
- * - Inserts or reconciles baseline datatype definitions (locked).
- * - Skips automatically on CI (CI=true/1) or when disabled via env.
  */
 @Injectable()
 export class DatatypesBootstrap implements OnModuleInit {
@@ -153,39 +136,6 @@ export class DatatypesBootstrap implements OnModuleInit {
         const insertDoc: DataTypeDocBase = this.buildInsertDoc(seed, now);
         await coll.insertOne(insertDoc as unknown as DataTypeDocBase);
         inserted += 1;
-      const coll = await this.getDatatypesCollection();
-      await this.ensureIndexes(coll);
-      await this.syncSeeds(coll);
-      this.logger.log('Datatypes bootstrap complete.');
-    } catch (err) {
-      throw MongoActionError.wrap(err, { operation: 'datatypesBootstrap' });
-    }
-  }
-
-  private async getDatatypesCollection(): Promise<Collection<DataTypeDocBase>> {
-    const db = await this.mongo.getDb();
-    return db.collection<DataTypeDocBase>(DATATYPES_COLLECTION);
-  }
-
-  private async ensureIndexes(
-    coll: Collection<DataTypeDocBase>,
-  ): Promise<void> {
-    await coll.createIndex(
-      { keyLower: 1 },
-      { unique: true, name: 'uniq_datatypes_keyLower' },
-    );
-  }
-
-  private async syncSeeds(coll: Collection<DataTypeDocBase>): Promise<void> {
-    const now = new Date();
-
-    for (const seed of DATATYPE_SEEDS) {
-      const existing = await coll.findOne({
-        keyLower: seed.keyLower,
-      } as Document);
-
-      if (!existing) {
-        await coll.insertOne(this.buildSeedDoc(seed, now));
         this.logger.log(`Inserted seed datatype: ${seed.key}`);
         continue;
       }
@@ -200,9 +150,8 @@ export class DatatypesBootstrap implements OnModuleInit {
       }
       reconciled += 1;
       this.logger.log(`Reconciled seed datatype: ${seed.key}`);
-      if (!needsUpdate) {
+      if (!needsUpdate)
         this.logger.log(`Seed datatype already up to date: ${seed.key}`);
-      }
     }
 
     const lockedDocs = await coll
@@ -210,14 +159,11 @@ export class DatatypesBootstrap implements OnModuleInit {
         projection: { key: 1, keyLower: 1 },
       })
       .toArray();
-
     for (const doc of lockedDocs) {
       const record = doc as Document;
       const keyLower =
         typeof record.keyLower === 'string' ? record.keyLower : undefined;
-      if (!keyLower || isDatatypeSeedKey(keyLower)) {
-        continue;
-      }
+      if (!keyLower || isDatatypeSeedKey(keyLower)) continue;
       const key = typeof record.key === 'string' ? record.key : keyLower;
       this.logger.warn(
         `Locked datatype not in seed set: "${key}" (left untouched).`,
@@ -228,30 +174,6 @@ export class DatatypesBootstrap implements OnModuleInit {
   }
 
   private buildInsertDoc(seed: DatatypeSeed, now: Date): DataTypeDocBase {
-      await coll.updateOne(
-        { _id: existing._id } as Document,
-        {
-          $set: this.buildSeedUpdate(seed, now),
-        } as Document,
-      );
-      this.logger.log(`Reconciled seed datatype: ${seed.key}`);
-    }
-
-    const locked = await coll
-      .find({ locked: true } as Document, { projection: { key: 1, _id: 0 } })
-      .toArray();
-
-    for (const doc of locked) {
-      const key = (doc as { key?: unknown }).key;
-      if (typeof key === 'string' && !isDatatypeSeedKey(key)) {
-        this.logger.warn(
-          `Locked datatype not in seed set: "${key}" (left untouched).`,
-        );
-      }
-    }
-  }
-
-  private buildSeedDoc(seed: DatatypeSeed, now: Date): DataTypeDocBase {
     return {
       key: seed.key,
       keyLower: seed.keyLower,
@@ -284,7 +206,7 @@ export class DatatypesBootstrap implements OnModuleInit {
   }
 }
 
-function cloneFieldForWrite(field: DatatypeSeedField): EntityField {
+function cloneFieldForWrite(field: EntityField): EntityField {
   return {
     fieldKey: field.fieldKey,
     required: field.required,
@@ -311,10 +233,7 @@ function cloneIndexForWrite(index: EntityIndexSpec): EntityIndexSpec {
       }
     : undefined;
 
-  return {
-    keys: { ...index.keys },
-    ...(options ? { options } : {}),
-  };
+  return { keys: { ...index.keys }, ...(options ? { options } : {}) };
 }
 
 function seedRequiresUpdate(
@@ -335,9 +254,7 @@ function fieldsEqual(
   current: ReadonlyArray<EntityField>,
   seed: ReadonlyArray<EntityField>,
 ): boolean {
-  if (current.length !== seed.length) {
-    return false;
-  }
+  if (current.length !== seed.length) return false;
   return current.every(
     (field, index) =>
       stableStringify(normalizeField(field)) ===
@@ -349,9 +266,7 @@ function indexesEqual(
   current: ReadonlyArray<EntityIndexSpec>,
   seed: ReadonlyArray<EntityIndexSpec>,
 ): boolean {
-  if (current.length !== seed.length) {
-    return false;
-  }
+  if (current.length !== seed.length) return false;
   return current.every(
     (index, idx) =>
       stableStringify(normalizeIndex(index)) ===
@@ -365,15 +280,10 @@ function normalizeField(field: EntityField): Record<string, unknown> {
     required: field.required,
     array: field.array,
   };
-  if (field.unique !== undefined) {
-    normalized.unique = field.unique;
-  }
-  if (field.constraints !== undefined) {
+  if (field.unique !== undefined) normalized.unique = field.unique;
+  if (field.constraints !== undefined)
     normalized.constraints = field.constraints;
-  }
-  if (field.order !== undefined) {
-    normalized.order = field.order;
-  }
+  if (field.order !== undefined) normalized.order = field.order;
   return normalized;
 }
 
@@ -381,9 +291,7 @@ function normalizeIndex(index: EntityIndexSpec): Record<string, unknown> {
   const normalized: Record<string, unknown> = {
     keys: Object.entries(index.keys),
   };
-  if (index.options) {
-    normalized.options = normalizeIndexOptions(index.options);
-  }
+  if (index.options) normalized.options = normalizeIndexOptions(index.options);
   return normalized;
 }
 
@@ -399,33 +307,26 @@ function normalizeIndexOptions(
 }
 
 function stableStringify(value: unknown): string {
-  if (value === undefined) {
-    return 'undefined';
-  }
-  if (value === null) {
-    return 'null';
-  }
-  if (Array.isArray(value)) {
-    return `[${value.map((item) => stableStringify(item)).join(',')}]`;
-  }
-  if (value instanceof Date) {
-    return `"${value.toISOString()}"`;
-  }
+  if (value === undefined) return 'undefined';
+  if (value === null) return 'null';
+  if (Array.isArray(value))
+    return `[${value.map((i) => stableStringify(i)).join(',')}]`;
+  if (value instanceof Date) return `"${value.toISOString()}"`;
   if (value && typeof value === 'object') {
     const entries = Object.entries(value as Record<string, unknown>).sort(
       ([a], [b]) => (a < b ? -1 : a > b ? 1 : 0),
     );
     return `{${entries
-      .map(([key, val]) => `${JSON.stringify(key)}:${stableStringify(val)}`)
+      .map(([k, v]) => `${JSON.stringify(k)}:${stableStringify(v)}`)
       .join(',')}}`;
   }
   return JSON.stringify(value);
 }
 
 function isDuplicateKeyError(err: unknown): err is MongoServerError {
-  if (!err || typeof err !== 'object') return false;
-  const code = (err as MongoServerError).code;
-  return typeof code === 'number' && code === 11000;
+  return (
+    !!err && typeof err === 'object' && (err as MongoServerError).code === 11000
+  );
 }
 
 /** Bootstrap gating: run locally, skip on CI or when disabled explicitly. */
@@ -434,59 +335,4 @@ function shouldRunBootstrap(): boolean {
   if (ci === 'true' || ci === '1') return false;
   const flag = String(process.env.DATATYPES_BOOTSTRAP ?? '1').toLowerCase();
   return flag !== '0' && flag !== 'false';
-      version: seed.version,
-      status: seed.status,
-      fields: this.cloneFields(seed.fields),
-      storage: { mode: seed.storage.mode },
-      indexes: this.cloneIndexes(seed.indexes),
-      locked: true,
-      createdAt: now,
-      updatedAt: now,
-    } satisfies DataTypeDocBase;
-  }
-
-  private buildSeedUpdate(
-    seed: DatatypeSeed,
-    now: Date,
-  ): Partial<DataTypeDocBase> {
-    const update: Partial<DataTypeDocBase> = {
-      label: seed.label,
-      version: seed.version,
-      status: seed.status,
-      fields: this.cloneFields(seed.fields),
-      storage: { mode: seed.storage.mode },
-      indexes: this.cloneIndexes(seed.indexes),
-      locked: true,
-      updatedAt: now,
-    };
-
-    return update;
-  }
-
-  private cloneFields(fields: DatatypeSeed['fields']): EntityField[] {
-    return fields.map((f) => ({
-      fieldKey: f.fieldKey,
-      required: f.required ?? false,
-      array: f.array ?? false,
-      unique: f.unique === true ? true : undefined,
-      constraints: f.constraints ? { ...f.constraints } : undefined,
-      order: f.order,
-    }));
-  }
-
-  private cloneIndexes(
-    indexes: ReadonlyArray<EntityIndexSpec>,
-  ): EntityIndexSpec[] {
-    return indexes.map((idx) => ({
-      keys: { ...idx.keys },
-      options: idx.options ? { ...idx.options } : undefined,
-    }));
-  }
-}
-
-function shouldRunBootstrap(): boolean {
-  const ci = String(process.env.CI ?? '').toLowerCase();
-  if (ci === 'true' || ci === '1') return false;
-  const flag = String(process.env.DATATYPES_BOOTSTRAP ?? '1');
-  return flag !== '0' && flag.toLowerCase() !== 'false';
 }
