@@ -220,7 +220,7 @@ export class EntitiesService {
     const { filter, sort } = this.buildListQuery(dt, query);
 
     // beforeList hook phase (read-only; safe no-op if hooks not wired)
-    if (this.hooks) {
+    if (this.hooks && this.hooksEnabled()) {
       const ctx: HookContext = {
         payload: { query },
         meta: { typeKey: dt.keyLower },
@@ -241,7 +241,7 @@ export class EntitiesService {
     );
 
     // afterList hook phase (may enrich items)
-    if (this.hooks) {
+    if (this.hooks && this.hooksEnabled()) {
       const base = { items, page, pageSize, total };
       const ctx: HookContext = {
         payload: { query },
@@ -313,7 +313,7 @@ export class EntitiesService {
     const { discriminator } = this.resolveCollectionInfo(dt);
 
     // Hooks: beforeCreate (validation, etc.)
-    if (this.hooks) {
+    if (this.hooks && this.hooksEnabled()) {
       const ctx: HookContext = {
         payload,
         meta: { typeKey: dt.keyLower, reqId: this.reqId?.getId() },
@@ -381,7 +381,7 @@ export class EntitiesService {
     const { discriminator } = this.resolveCollectionInfo(dt);
 
     // Hooks: beforeUpdate (validation, etc.)
-    if (this.hooks) {
+    if (this.hooks && this.hooksEnabled()) {
       const ctx: HookContext = {
         payload: changes,
         meta: { typeKey: dt.keyLower, reqId: this.reqId?.getId() },
@@ -566,7 +566,14 @@ export class EntitiesService {
     return v === '1' || v === 'true';
   }
   private shouldRunOnDelete(): boolean {
-    const v = (process.env.DATATYPES_ONDELETE ?? '1').toLowerCase();
+    const p = (process.env.INTEGRITY_ENFORCE ?? '').toLowerCase();
+    if (p === '1' || p === 'true') return true;
+    const legacy = (process.env.DATATYPES_ONDELETE ?? '1').toLowerCase();
+    return legacy === '1' || legacy === 'true';
+  }
+
+  private hooksEnabled(): boolean {
+    const v = (process.env.HOOKS_ENABLE ?? '1').toLowerCase();
     return v === '1' || v === 'true';
   }
 

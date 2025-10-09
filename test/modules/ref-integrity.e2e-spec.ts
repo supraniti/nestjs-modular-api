@@ -196,12 +196,6 @@ const isCI = process.env.CI === '1' || process.env.CI === 'true';
     expect(commentId).toBeTruthy();
 
     // Delete author with existing posts -> 409 (restrict)
-    // Debug: inspect posts before delete
-    const listBefore = await request(http)
-      .get(`/api/entities/${postKey}/list`)
-      .expect(200);
-
-    console.log('POSTS_BEFORE_DELETE', JSON.stringify(listBefore.body));
     await request(http)
       .post(`/api/entities/${authorKey}/delete`)
       .send({ id: authorId })

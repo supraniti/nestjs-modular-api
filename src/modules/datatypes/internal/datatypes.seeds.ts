@@ -334,24 +334,46 @@ function parseField(field: unknown, context: string): EntityField {
       ...(onDelete ? { onDelete } : {}),
     };
     // If kind present, ignore legacy constraints.ref
-  } else if (
-    constraints &&
-    typeof (constraints as Record<string, unknown>)['ref'] === 'string'
-  ) {
-    const target = String(
-      (constraints as Record<string, unknown>)['ref'],
-    ).trim();
-    if (isKebabCaseKey(target) && target.length > 0) {
-      // Warn once per field
-
-      console.warn(
-        `${fieldContext}: constraints.ref is deprecated; coerced to kind.ref.`,
-      );
-      kind = { type: 'ref', target };
-      // Drop constraints.ref in normalized form
-      const cloned = { ...(constraints as Record<string, unknown>) };
-      delete (cloned as Record<string, unknown>)['ref'];
-      // Drop reference key from legacy constraints clone only
+  } else if (constraints) {
+    const refVal = (constraints as Record<string, unknown>)['ref'];
+    if (typeof refVal === 'string') {
+      const t = refVal.trim();
+      if (isKebabCaseKey(t) && t.length > 0) {
+        console.warn(
+          `${fieldContext}: constraints.ref is deprecated; coerced to kind.ref.`,
+        );
+        kind = { type: 'ref', target: t };
+      }
+    } else if (isPlainObject(refVal)) {
+      const obj = refVal as Record<string, unknown>;
+      const rawTo = obj['to'];
+      if (typeof rawTo !== 'string' || rawTo.trim().length === 0) {
+        throw new Error(
+          `${fieldContext}: constraints.ref.to must be a string.`,
+        );
+      }
+      const to = rawTo.trim();
+      if (!isKebabCaseKey(to)) {
+        throw new Error(
+          `${fieldContext}: constraints.ref.to must be kebab-case.`,
+        );
+      }
+      const many = obj['many'] === true;
+      const od = obj['onDelete'];
+      if (
+        od !== undefined &&
+        od !== 'restrict' &&
+        od !== 'setNull' &&
+        od !== 'cascade'
+      ) {
+        throw new Error(`${fieldContext}: constraints.ref.onDelete invalid.`);
+      }
+      kind = {
+        type: 'ref',
+        target: to,
+        ...(many ? { cardinality: 'many' } : {}),
+        ...(od ? { onDelete: od } : {}),
+      };
     }
   }
 

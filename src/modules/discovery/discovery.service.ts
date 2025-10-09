@@ -90,12 +90,18 @@ export class DiscoveryService {
       entities: { types: await this.loadAllEntityTypes() },
     };
 
+    const relsEnabled = (
+      process.env.DISCOVERY_RELATIONS_ENABLE ?? '1'
+    ).toLowerCase();
     await this.refs.ensureFromDb();
-    const relations = this.mapEdgesToDto(this.refs.toEdges()).sort((a, b) =>
-      a.from === b.from
-        ? a.fieldKey.localeCompare(b.fieldKey)
-        : a.from.localeCompare(b.from),
-    );
+    const relations =
+      relsEnabled === '0' || relsEnabled === 'false'
+        ? []
+        : this.mapEdgesToDto(this.refs.toEdges()).sort((a, b) =>
+            a.from === b.from
+              ? a.fieldKey.localeCompare(b.fieldKey)
+              : a.from.localeCompare(b.from),
+          );
 
     return {
       version: 1,
@@ -130,13 +136,20 @@ export class DiscoveryService {
     });
 
     await this.refs.ensureFromDb();
+    const flag = (process.env.DISCOVERY_RELATIONS_ENABLE ?? '1').toLowerCase();
     const kLower = dt.key.toLowerCase();
-    const outgoing = this.mapEdgesToDto(this.refs.getOutgoing(kLower)).sort(
-      (a, b) => a.fieldKey.localeCompare(b.fieldKey),
-    );
-    const incoming = this.mapEdgesToDto(this.refs.getIncoming(kLower)).sort(
-      (a, b) => a.fieldKey.localeCompare(b.fieldKey),
-    );
+    const outgoing =
+      flag === '0' || flag === 'false'
+        ? []
+        : this.mapEdgesToDto(this.refs.getOutgoing(kLower)).sort((a, b) =>
+            a.fieldKey.localeCompare(b.fieldKey),
+          );
+    const incoming =
+      flag === '0' || flag === 'false'
+        ? []
+        : this.mapEdgesToDto(this.refs.getIncoming(kLower)).sort((a, b) =>
+            a.fieldKey.localeCompare(b.fieldKey),
+          );
 
     return {
       key: dt.key,
@@ -165,6 +178,31 @@ export class DiscoveryService {
       onDelete:
         (e.onDelete as 'restrict' | 'setNull' | 'cascade') ?? 'restrict',
     }));
+  }
+
+  public async getEntityRelations(
+    typeKey: string,
+  ): Promise<
+    import('./dto/GetEntityRelations.response.dto').GetEntityRelationsResponseDto
+  > {
+    const dt = await this.entities.getDatatype(typeKey);
+    await this.refs.ensureFromDb();
+    const kLower = dt.key.toLowerCase();
+    const outgoing = this.mapEdgesToDto(this.refs.getOutgoing(kLower)).map(
+      (e) => ({
+        fieldKey: e.fieldKey,
+        to: e.to,
+        many: e.cardinality === 'many',
+      }),
+    );
+    const incoming = this.mapEdgesToDto(this.refs.getIncoming(kLower)).map(
+      (e) => ({
+        from: e.from,
+        fieldKey: e.fieldKey,
+        many: e.cardinality === 'many',
+      }),
+    );
+    return { type: dt.key, outgoing, incoming };
   }
 
   /* ===========================================================
