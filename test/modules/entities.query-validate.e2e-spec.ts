@@ -1,0 +1,570 @@
+// test/modules/entities.query-validate.e2e-spec.ts
+import { INestApplication } from '@nestjs/common';
+import { Test, TestingModule } from '@nestjs/testing';
+import request from 'supertest';
+import type { Server } from 'http';
+import { ObjectId } from 'mongodb';
+
+import { EntitiesModule } from '../../src/modules/entities/entities.module';
+import { MongodbModule } from '../../src/modules/mongodb/mongodb.module';
+import { MongodbService } from '../../src/modules/mongodb/mongodb.service';
+import { DockerModule } from '../../src/modules/docker/docker.module';
+import { MongoInfraBootstrap } from '../../src/infra/mongo/mongo.bootstrap';
+import { HookStore } from '../../src/modules/hooks/hook.store';
+
+type QERequest =
+  import('../../src/modules/entities/dto/QueryEntities.request.dto').QueryEntitiesRequestDto;
+type QEResponse =
+  import('../../src/modules/entities/dto/QueryEntities.response.dto').QueryEntitiesResponseDto;
+type PrevalReq =
+  import('../../src/modules/entities/dto/Prevalidate.request.dto').PrevalidateRequestDto;
+type PrevalRes =
+  import('../../src/modules/entities/dto/Prevalidate.response.dto').PrevalidateResponseDto;
+
+const IS_CI = /^(1|true)$/i.test(process.env.CI ?? '');
+
+// Allow time for Docker bootstrap on first run
+jest.setTimeout(120_000);
+
+(IS_CI ? describe.skip : describe)(
+  'Entities Query & Prevalidate (contracts)',
+  () => {
+    let app: INestApplication;
+    let http: Server;
+    let mongo: MongodbService;
+    let hooks: HookStore;
+
+    const runId = Date.now().toString(36);
+    const postKey = `e2e_post_${runId}`;
+    const postKeyLower = postKey.toLowerCase();
+    const postCol = `data_${postKeyLower}`;
+    const authorKey = `e2e_author_${runId}`;
+    const authorCol = `data_${authorKey.toLowerCase()}`;
+    const commentRestrictKey = `e2e_comment_restrict_${runId}`;
+    const commentRestrictCol = `data_${commentRestrictKey.toLowerCase()}`;
+    const noteSetNullOneKey = `e2e_note_one_${runId}`;
+    const noteSetNullOneCol = `data_${noteSetNullOneKey.toLowerCase()}`;
+
+    const mkDt = (
+      key: string,
+      fields: any[],
+      storage: 'perType' | 'single' = 'perType',
+    ) => ({
+      _id: new ObjectId(),
+      key,
+      keyLower: key.toLowerCase(),
+      label: key,
+      version: 1,
+      status: 'published' as const,
+      storage,
+      fields,
+      indexes: [],
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+
+    const postDt = mkDt(postKey, [
+      { key: 'title', label: 'Title', type: 'string', required: true },
+      {
+        key: 'status',
+        label: 'Status',
+        type: 'enum',
+        constraints: { enumValues: ['draft', 'published'] },
+      },
+      { key: 'views', label: 'Views', type: 'number' },
+      { key: 'slug', label: 'Slug', type: 'string', unique: true },
+      // Optional ref used for enrichment test
+      {
+        key: 'authorId',
+        label: 'Author',
+        type: 'string',
+        required: false,
+        // Provide both legacy 'kind' and 'constraints.ref' for compatibility with enrich action
+        constraints: { ref: authorKey.toLowerCase() },
+        kind: {
+          type: 'ref',
+          target: authorKey.toLowerCase(),
+          cardinality: 'one',
+          onDelete: 'restrict',
+        },
+      },
+    ]);
+    const authorDt = mkDt(authorKey, [
+      { key: 'name', label: 'Name', type: 'string', required: true },
+    ]);
+    const commentRestrictDt = mkDt(commentRestrictKey, [
+      {
+        key: 'postId',
+        label: 'Post',
+        type: 'string',
+        required: true,
+        kind: {
+          type: 'ref',
+          target: postKeyLower,
+          cardinality: 'one',
+          onDelete: 'restrict',
+        },
+      },
+      { key: 'body', label: 'Body', type: 'string', required: true },
+    ]);
+    // setNull with cardinality=one to surface wouldUnset in simulation
+    const noteSetNullOneDt = mkDt(noteSetNullOneKey, [
+      {
+        key: 'postId',
+        label: 'Post',
+        type: 'string',
+        required: false,
+        kind: {
+          type: 'ref',
+          target: postKeyLower,
+          cardinality: 'one',
+          onDelete: 'setNull',
+        },
+      },
+      { key: 'text', label: 'Text', type: 'string' },
+    ]);
+
+    beforeAll(async () => {
+      // Default flags: hooks off; integrity not enforced
+      process.env.HOOKS_ENABLE = '0';
+      process.env.INTEGRITY_ENFORCE = '0';
+      // Disable legacy onDelete enforcement for parts that assert simulation-only later
+      process.env.DATATYPES_ONDELETE = process.env.DATATYPES_ONDELETE ?? '0';
+
+      // Ensure local Mongo via docker when not CI
+      if (!IS_CI) {
+        if (!process.env.MONGO_AUTO_START) process.env.MONGO_AUTO_START = '1';
+        const bootstrapMod = await Test.createTestingModule({
+          imports: [DockerModule],
+          providers: [MongoInfraBootstrap],
+        }).compile();
+        await bootstrapMod.get(MongoInfraBootstrap).onApplicationBootstrap();
+        await bootstrapMod.close();
+      }
+
+      const moduleRef: TestingModule = await Test.createTestingModule({
+        imports: [MongodbModule, EntitiesModule],
+      }).compile();
+
+      app = moduleRef.createNestApplication();
+      app.setGlobalPrefix('api');
+      await app.init();
+
+      http = app.getHttpServer() as unknown as Server;
+      mongo = app.get(MongodbService);
+      hooks = app.get(HookStore);
+
+      const datatypes = await mongo.getCollection('datatypes');
+      await datatypes.insertMany([
+        postDt,
+        authorDt,
+        commentRestrictDt,
+        noteSetNullOneDt,
+      ]);
+
+      // Clean any residual collections from previous runs (best-effort)
+      const db = await mongo.getDb();
+      for (const c of [
+        postCol,
+        authorCol,
+        commentRestrictCol,
+        noteSetNullOneCol,
+      ]) {
+        await db
+          .collection(c)
+          .drop()
+          .catch(() => undefined);
+      }
+    });
+
+    afterAll(async () => {
+      try {
+        const datatypes = await mongo.getCollection('datatypes');
+        await datatypes.deleteMany({
+          key: {
+            $in: [postKey, authorKey, commentRestrictKey, noteSetNullOneKey],
+          },
+        });
+        const db = await mongo.getDb();
+        for (const c of [
+          postCol,
+          authorCol,
+          commentRestrictCol,
+          noteSetNullOneCol,
+        ]) {
+          await db
+            .collection(c)
+            .drop()
+            .catch(() => undefined);
+        }
+      } finally {
+        await app.close();
+        await mongo.onModuleDestroy();
+      }
+    });
+
+    describe('Query', () => {
+      it('paginates first page with cursor token present', async () => {
+        const db = await mongo.getDb();
+        const col = db.collection(postCol);
+        const base = Date.now();
+        const docs: Record<string, unknown>[] = [];
+        for (let i = 0; i < 30; i++) {
+          docs.push({
+            title: `Post ${i.toString().padStart(2, '0')}`,
+            status: i % 2 === 0 ? 'draft' : 'published',
+            views: i,
+            slug: `slug-${i}`,
+            createdAt: new Date(base - i * 1000),
+            updatedAt: new Date(base - i * 1000),
+          });
+        }
+        await col.insertMany(docs);
+
+        const first = await request(http)
+          .get('/api/entities/query')
+          .query({
+            type: postKey,
+            sort: '-createdAt',
+            limit: 10,
+          } satisfies QERequest)
+          .expect(200);
+        const body1 = first.body as unknown as QEResponse;
+        expect(body1.items.length).toBe(10);
+        expect(body1.page.hasMore).toBe(true);
+        expect(typeof body1.page.nextCursor).toBe('string');
+        // Verify first page ordering (desc by createdAt)
+        let prevDate = Number.MAX_SAFE_INTEGER;
+        for (const it of body1.items as Array<{
+          id: string;
+          createdAt?: string | number | Date;
+        }>) {
+          const d = new Date(
+            it['createdAt'] as unknown as string | number | Date,
+          ).getTime();
+          expect(d).toBeLessThanOrEqual(prevDate);
+          prevDate = d;
+        }
+      });
+
+      it('supports $in/$regex/range and rejects invalid JSON', async () => {
+        // $in on status
+        const resIn = await request(http)
+          .get('/api/entities/query')
+          .query({
+            type: postKey,
+            filter: JSON.stringify({ status: { $in: ['published'] } }),
+          } satisfies QERequest)
+          .expect(200);
+        const inItems = (resIn.body as unknown as QEResponse).items;
+        expect(inItems.every((i) => i['status'] === 'published')).toBe(true);
+
+        // $regex on title (case-sensitive as implemented)
+        const resRe = await request(http)
+          .get('/api/entities/query')
+          .query({
+            type: postKey,
+            filter: JSON.stringify({ title: { $regex: 'Post 1' } }),
+          } satisfies QERequest)
+          .expect(200);
+        const reItems = (resRe.body as unknown as QEResponse).items;
+        expect(reItems.length).toBeGreaterThan(0);
+        expect(
+          reItems.every((i) => String(i['title']).includes('Post 1')),
+        ).toBe(true);
+
+        // Range on views
+        const resRange = await request(http)
+          .get('/api/entities/query')
+          .query({
+            type: postKey,
+            filter: JSON.stringify({ views: { $gte: 5, $lt: 10 } }),
+          } satisfies QERequest)
+          .expect(200);
+        const rgItems = (resRange.body as unknown as QEResponse).items;
+        expect(rgItems.length).toBe(5);
+        expect(
+          rgItems.every(
+            (i) => (i['views'] as number) >= 5 && (i['views'] as number) < 10,
+          ),
+        ).toBe(true);
+
+        // Invalid JSON -> 400 BadQuery
+        const bad = await request(http)
+          .get('/api/entities/query')
+          .query({
+            type: postKey,
+            filter: '{"status": {$gt:}',
+          } as unknown as QERequest)
+          .expect(400);
+        const badBody = bad.body as unknown as {
+          ok: boolean;
+          error?: { code?: string };
+        };
+        expect(badBody.ok).toBe(false);
+        expect(badBody.error?.code).toBe('BadQuery');
+      });
+    });
+
+    describe('Prevalidate', () => {
+      it('create: required fields → ok:false; no write', async () => {
+        const db = await mongo.getDb();
+        const col = db.collection(postCol);
+        const before = await col.countDocuments();
+        const res = await request(http)
+          .post('/api/entities/validate')
+          .send({
+            type: postKey,
+            mode: 'create',
+            payload: { status: 'draft' },
+          } satisfies PrevalReq)
+          .expect((s) => [200, 201].includes(s.status));
+        const body = res.body as unknown as PrevalRes;
+        expect(body.ok).toBe(false);
+        expect(Array.isArray(body.errors)).toBe(true);
+        const after = await col.countDocuments();
+        expect(after).toBe(before);
+      });
+
+      it('create: valid payload → ok:true; no write', async () => {
+        const db = await mongo.getDb();
+        const col = db.collection(postCol);
+        const before = await col.countDocuments();
+        const res = await request(http)
+          .post('/api/entities/validate')
+          .send({
+            type: postKey,
+            mode: 'create',
+            payload: { title: 'X', status: 'draft', slug: 'unique-1' },
+          } satisfies PrevalReq)
+          .expect((s) => [200, 201].includes(s.status));
+        const body = res.body as unknown as PrevalRes;
+        expect(body.ok).toBe(true);
+        const after = await col.countDocuments();
+        expect(after).toBe(before);
+      });
+
+      it('update: enum constraint violation → ok:false', async () => {
+        const res = await request(http)
+          .post('/api/entities/validate')
+          .send({
+            type: postKey,
+            mode: 'update',
+            payload: { status: 'unknown' },
+          } satisfies PrevalReq)
+          .expect((s) => [200, 201].includes(s.status));
+        const body = res.body as unknown as PrevalRes;
+        expect(body.ok).toBe(false);
+        expect(body.errors.length).toBeGreaterThan(0);
+      });
+
+      it('update: unique collision when enforceUnique=true', async () => {
+        const db = await mongo.getDb();
+        const col = db.collection(postCol);
+        await col.insertMany([
+          {
+            title: 'A',
+            status: 'draft',
+            slug: 'dup-1',
+            createdAt: new Date(),
+            updatedAt: new Date(),
+          },
+          {
+            title: 'B',
+            status: 'draft',
+            slug: 'dup-2',
+            createdAt: new Date(),
+            updatedAt: new Date(),
+          },
+        ]);
+        const res = await request(http)
+          .post('/api/entities/validate')
+          .send({
+            type: postKey,
+            mode: 'update',
+            payload: { slug: 'dup-1' },
+            options: { enforceUnique: true },
+          } satisfies PrevalReq)
+          .expect((s) => [200, 201].includes(s.status));
+        const body = res.body as unknown as PrevalRes;
+        expect(body.ok).toBe(false);
+        expect(
+          body.errors.some(
+            (e) => e.code?.toUpperCase?.() === 'UNIQUE' || e.code === 'UNIQUE',
+          ),
+        ).toBe(true);
+      });
+
+      it('delete: integrity simulation restrict/setNull', async () => {
+        const db = await mongo.getDb();
+        const posts = db.collection(postCol);
+        const comments = db.collection(commentRestrictCol);
+        const notes = db.collection(noteSetNullOneCol);
+        const { insertedId: pid } = await posts.insertOne({
+          title: 'P',
+          status: 'published',
+          slug: 's',
+          createdAt: new Date(),
+          updatedAt: new Date(),
+        });
+        await comments.insertOne({
+          postId: pid,
+          body: 'c1',
+          createdAt: new Date(),
+          updatedAt: new Date(),
+        });
+        await notes.insertOne({
+          postId: pid,
+          text: 'n1',
+          createdAt: new Date(),
+          updatedAt: new Date(),
+        });
+
+        const res = await request(http)
+          .post('/api/entities/validate')
+          .send({
+            type: postKey,
+            mode: 'delete',
+            identity: { _id: pid.toHexString() },
+          } satisfies PrevalReq)
+          .expect((s) => [200, 201].includes(s.status));
+        const body = res.body as PrevalRes;
+        expect(body.ok).toBe(true);
+        expect(
+          body.effects?.delete?.restrictedBy?.some(
+            (e) =>
+              e.type === commentRestrictKey.toLowerCase() &&
+              e.field === 'postId' &&
+              e.count > 0,
+          ),
+        ).toBe(true);
+        expect(
+          body.effects?.delete?.wouldUnset?.some(
+            (e) =>
+              e.type === noteSetNullOneKey.toLowerCase() &&
+              e.field === 'postId' &&
+              e.docCount > 0,
+          ),
+        ).toBe(true);
+
+        // No refs case
+        const { insertedId: pid2 } = await posts.insertOne({
+          title: 'P2',
+          status: 'draft',
+          slug: 't',
+          createdAt: new Date(),
+          updatedAt: new Date(),
+        });
+        const res2 = await request(http)
+          .post('/api/entities/validate')
+          .send({
+            type: postKey,
+            mode: 'delete',
+            identity: { _id: pid2.toHexString() },
+          } satisfies PrevalReq)
+          .expect((s) => [200, 201].includes(s.status));
+        const body2 = res2.body as unknown as PrevalRes;
+        expect(body2.effects?.delete?.restrictedBy ?? []).toEqual([]);
+        expect(body2.effects?.delete?.wouldUnset ?? []).toEqual([]);
+      });
+    });
+
+    describe('Hooks enabled', () => {
+      beforeAll(() => {
+        process.env.HOOKS_ENABLE = '1';
+        // beforeCreate: validate; afterGet: enrich authorId
+        hooks.applyPatch({
+          typeKey: postKeyLower,
+          phases: {
+            beforeCreate: [
+              {
+                action:
+                  'validate' as unknown as import('../../src/modules/hooks/types').HookActionId,
+              },
+            ],
+            afterGet: [
+              {
+                action:
+                  'enrich' as unknown as import('../../src/modules/hooks/types').HookActionId,
+                args: { with: ['authorId'] },
+              },
+            ],
+          },
+        });
+      });
+
+      it('beforeCreate.validate blocks invalid create', async () => {
+        const res = await request(http)
+          .post(`/api/entities/${postKey}/create`)
+          .send({ status: 'draft' })
+          .expect(422);
+        expect(res.body).toEqual(
+          expect.objectContaining({ code: 'VALIDATION_FAILED' }),
+        );
+      });
+
+      it('afterGet.enrich augments response', async () => {
+        // Seed author + post referencing author
+        const db = await mongo.getDb();
+        const authors = db.collection(authorCol);
+        const posts = db.collection(postCol);
+        const { insertedId: aid } = await authors.insertOne({
+          name: 'A',
+          createdAt: new Date(),
+          updatedAt: new Date(),
+        });
+        const { insertedId: pid } = await posts.insertOne({
+          title: 'WithAuthor',
+          status: 'published',
+          slug: `sa-${runId}`,
+          authorId: aid,
+          createdAt: new Date(),
+          updatedAt: new Date(),
+        });
+
+        const res = await request(http)
+          .get(`/api/entities/${postKey}/get`)
+          .query({ id: pid.toHexString() })
+          .expect(200);
+        const body = res.body as unknown as Record<string, unknown>;
+        expect(body['authorId'] && typeof body['authorId']).toBe('object');
+        const authorObj = body['authorId'] as Record<string, unknown>;
+        expect(typeof authorObj['id']).toBe('string');
+        expect(authorObj['name']).toBe('A');
+      });
+    });
+
+    describe('Flags off (backward safety)', () => {
+      it('CRUD works; validate simulates; delete not enforced at runtime', async () => {
+        process.env.HOOKS_ENABLE = '0';
+        process.env.INTEGRITY_ENFORCE = '0';
+        process.env.DATATYPES_ONDELETE = '0';
+
+        // create should work without extra validation/enrichment
+        const create = await request(http)
+          .post(`/api/entities/${postKey}/create`)
+          .send({ title: 'NoHook', status: 'draft', slug: `z-${runId}` })
+          .expect(201);
+        const id = (create.body as { id: string }).id;
+
+        // validate delete simulates
+        const sim = await request(http)
+          .post('/api/entities/validate')
+          .send({
+            type: postKey,
+            mode: 'delete',
+            identity: { _id: id },
+          } satisfies PrevalReq)
+          .expect((s) => [200, 201].includes(s.status));
+        const simBody = sim.body as unknown as PrevalRes;
+        expect(simBody.ok).toBe(true);
+
+        // runtime delete does not enforce integrity when flags off
+        await request(http)
+          .post(`/api/entities/${postKey}/delete`)
+          .send({ id })
+          .expect(200);
+      });
+    });
+  },
+);
