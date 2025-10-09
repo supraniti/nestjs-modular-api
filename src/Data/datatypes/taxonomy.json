@@ -1,0 +1,81 @@
+{
+  "key": "taxonomy",
+  "label": "Taxonomy",
+  "status": "published",
+  "version": 1,
+  "storage": { "mode": "single" },
+
+  "fields": [
+    {
+      "fieldKey": "kind",
+      "required": true,
+      "array": false,
+      "constraints": { "enum": ["tag", "category", "attribute"] }
+    },
+    {
+      "fieldKey": "key",
+      "required": true,
+      "array": false,
+      "constraints": {
+        "minLength": 1,
+        "maxLength": 120,
+        "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$"
+      }
+    },
+    {
+      "fieldKey": "label",
+      "required": true,
+      "array": false,
+      "constraints": { "minLength": 1, "maxLength": 160 }
+    },
+    {
+      "fieldKey": "slug",
+      "required": false,
+      "array": false,
+      "constraints": { "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$" }
+    },
+
+    { "fieldKey": "parentId", "required": false, "array": false },
+    { "fieldKey": "path", "required": false, "array": true },
+    { "fieldKey": "ord", "required": false, "array": false },
+
+    {
+      "fieldKey": "valueType",
+      "required": false,
+      "array": false,
+      "constraints": { "enum": ["string", "number", "boolean", "enum"] }
+    },
+    { "fieldKey": "unit", "required": false, "array": false },
+    { "fieldKey": "options", "required": false, "array": true }
+  ],
+
+  "indexes": [
+    {
+      "keys": { "kind": 1, "key": 1 },
+      "options": { "unique": true, "name": "uniq_taxonomy_kind_key" }
+    },
+    {
+      "keys": { "slug": 1 },
+      "options": { "sparse": true, "name": "idx_taxonomy_slug" }
+    },
+    {
+      "keys": { "kind": 1, "parentId": 1 },
+      "options": { "name": "idx_taxonomy_kind_parent" }
+    },
+    {
+      "keys": { "label": "text", "key": "text", "slug": "text" },
+      "options": { "name": "text_taxonomy" }
+    }
+  ],
+
+  "hooks": {
+    "beforeCreate": [
+      { "action": "validate", "args": { "schema": "taxonomy.base" } },
+      { "action": "taxonomy.ensureHierarchy", "args": {} }
+    ],
+    "beforeUpdate": [
+      { "action": "validate", "args": { "schema": "taxonomy.base" } },
+      { "action": "taxonomy.ensureHierarchy", "args": {} }
+    ]
+  }
+}

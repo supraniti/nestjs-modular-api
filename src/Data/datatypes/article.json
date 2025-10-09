@@ -1,0 +1,87 @@
+{
+  "key": "article",
+  "label": "Article",
+  "status": "published",
+  "version": 1,
+  "storage": { "mode": "single" },
+
+  "fields": [
+    {
+      "fieldKey": "title",
+      "required": true,
+      "array": false,
+      "constraints": { "minLength": 1, "maxLength": 160 }
+    },
+    {
+      "fieldKey": "slug",
+      "required": false,
+      "array": false,
+      "constraints": { "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$" }
+    },
+    {
+      "fieldKey": "content",
+      "required": true,
+      "array": false,
+      "constraints": { "minLength": 1 }
+    },
+    {
+      "fieldKey": "excerpt",
+      "required": false,
+      "array": false,
+      "constraints": { "maxLength": 300 }
+    },
+
+    {
+      "fieldKey": "status",
+      "required": true,
+      "array": false,
+      "constraints": { "enum": ["draft", "published", "archived"] }
+    },
+    { "fieldKey": "publishedAt", "required": false, "array": false },
+    { "fieldKey": "authorId", "required": false, "array": false },
+
+    { "fieldKey": "tags", "required": false, "array": true },
+    { "fieldKey": "categories", "required": false, "array": true },
+    { "fieldKey": "attributes", "required": false, "array": true },
+
+    { "fieldKey": "revisions", "required": false, "array": true }
+  ],
+
+  "indexes": [
+    {
+      "keys": { "slug": 1 },
+      "options": { "unique": true, "sparse": true, "name": "uniq_article_slug" }
+    },
+    {
+      "keys": { "status": 1, "publishedAt": -1 },
+      "options": { "name": "idx_article_status_date" }
+    },
+    {
+      "keys": { "title": "text", "content": "text", "excerpt": "text" },
+      "options": { "name": "text_article" }
+    }
+  ],
+
+  "hooks": {
+    "beforeCreate": [
+      { "action": "validate", "args": { "schema": "article.base" } },
+      { "action": "article.validateTaxonomies", "args": {} }
+    ],
+    "beforeUpdate": [
+      { "action": "validate", "args": { "schema": "article.base" } },
+      { "action": "article.validateTaxonomies", "args": {} }
+    ],
+    "afterGet": [
+      {
+        "action": "article.enrichTaxonomies",
+        "args": { "with": ["tags", "categories", "attributes"] }
+      }
+    ],
+    "afterList": [
+      {
+        "action": "article.enrichTaxonomies",
+        "args": { "with": ["tags", "categories"] }
+      }
+    ]
+  }
+}
