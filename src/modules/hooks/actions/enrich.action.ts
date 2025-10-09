@@ -24,10 +24,19 @@ export class EnrichAction implements HookAction<unknown, unknown> {
         items: { type: 'string', minLength: 1 },
         minItems: 1,
       },
-      maxDepth: { type: 'integer', minimum: 0, default: 0 },
+      maxDepth: { type: 'integer', minimum: 0, maximum: 5, default: 0 },
       select: {
         type: 'object',
         additionalProperties: { type: 'array', items: { type: 'string' } },
+      },
+      paths: {
+        type: 'object',
+        propertyNames: { pattern: '^[1-5]$' },
+        additionalProperties: {
+          type: 'array',
+          items: { type: 'string', minLength: 1 },
+          minItems: 1,
+        },
       },
     },
     required: ['with'],
@@ -55,93 +64,196 @@ export class EnrichAction implements HookAction<unknown, unknown> {
       }));
       throw new ValidationHttpException(details);
     }
-    const withKeys = stepArgs['with'] as string[];
+    const withKeys = (stepArgs['with'] as string[]) ?? [];
     const select = (stepArgs['select'] as Record<string, string[]>) ?? {};
-    const maxDepth = Math.max(0, Number(stepArgs['maxDepth'] ?? 0));
-    if (maxDepth > 0) {
-      this.logger.debug?.(`maxDepth > 0 not supported; clamping to 0`);
+    let maxDepth = Math.max(0, Number(stepArgs['maxDepth'] ?? 0));
+    if (maxDepth > 5) {
+      this.logger.debug?.(`maxDepth ${maxDepth} > 5; clamping to 5`);
+      maxDepth = 5;
     }
+    const paths =
+      (stepArgs['paths'] as Record<string, string[]> | undefined) ?? undefined;
 
     // Only operate on afterGet/afterList with result present
     if (phase !== 'afterGet' && phase !== 'afterList') return ctx;
     if (ctx.result == null) return ctx;
 
     // Load current datatype to inspect ref constraints
-    const dt = await this.loadDatatype(typeKey);
+    await this.loadDatatype(typeKey); // ensure datatype exists; specific fields loaded per-node below
 
     const items: Record<string, unknown>[] = Array.isArray(ctx.result)
       ? (ctx.result as Record<string, unknown>[])
       : [ctx.result as Record<string, unknown>];
 
-    // Plan: map targetType -> { ids: Set<string>, fieldKey: string[] }
-    const plan = new Map<string, { ids: Set<string>; fields: string[] }>();
+    // Resolve recursively up to maxDepth
+    const NODE_LIMIT = Math.max(
+      1,
+      Number.parseInt(process.env.HOOKS_ENRICH_NODE_LIMIT ?? '10000', 10) ||
+        10000,
+    );
+    const FANOUT_LIMIT = Math.max(
+      1,
+      Number.parseInt(process.env.HOOKS_ENRICH_FANOUT_LIMIT ?? '1000', 10) ||
+        1000,
+    );
+    let nodeCount = 0;
+    let warnedFanout = false;
+    let warnedNodeLimit = false;
+    const setTruncated = (doc: Record<string, unknown>) => {
+      doc['__enrichTruncated'] = true;
+    };
 
-    for (const fieldKey of withKeys) {
-      const field = this.findField(dt, fieldKey);
-      if (!field) continue;
-      const constraints =
-        (field['constraints'] as Record<string, unknown> | undefined) ??
-        undefined;
-      const refVal = constraints?.['ref'] as string | undefined;
-      const targetType =
-        typeof refVal === 'string' && refVal.length > 0 ? refVal : undefined;
-      if (!targetType) continue;
+    // caches
+    this.cache = new Map<string, Map<string, Record<string, unknown>>>();
+    const dtCache = new Map<string, Record<string, unknown>>();
+    const getDt = async (k: string) => {
+      const cached = dtCache.get(k);
+      if (cached) return cached;
+      const d = await this.loadDatatype(k);
+      dtCache.set(k, d);
+      return d;
+    };
+    const visited = new Map<string, Set<string>>();
+    const markVisited = (t: string, id: string) => {
+      const set = visited.get(t) ?? new Set<string>();
+      set.add(id);
+      visited.set(t, set);
+    };
+    const isVisited = (t: string, id: string) =>
+      visited.get(t)?.has(id) === true;
 
-      const entry = plan.get(targetType) ?? {
-        ids: new Set<string>(),
-        fields: [],
-      };
-      if (!plan.has(targetType)) plan.set(targetType, entry);
-      entry.fields.push(fieldKey);
+    // nodes per depth: array of { typeKey, doc }
+    type Node = { typeKey: string; doc: Record<string, unknown> };
+    let current: Node[] = items.map((d) => ({ typeKey, doc: d }));
 
-      for (const doc of items) {
-        const val = doc[fieldKey];
-        if (val == null) continue;
-        if (Array.isArray(val)) {
-          for (const v of val) {
-            const hex = this.asHexId(v);
-            if (hex) entry.ids.add(hex);
+    // Depth 0 attachments
+    for (let depth = 0; depth <= maxDepth; depth++) {
+      const fieldsAtDepth =
+        depth === 0 ? withKeys : (paths?.[String(depth)] ?? withKeys);
+      if (!fieldsAtDepth || fieldsAtDepth.length === 0) {
+        current = [];
+        break;
+      }
+      // plan ids to fetch
+      const plan = new Map<string, Set<string>>(); // targetType -> ids
+      // prefetch dt for current node types
+      for (const node of current) await getDt(node.typeKey);
+
+      for (const node of current) {
+        const dtNode = await getDt(node.typeKey);
+        for (const fieldKey of fieldsAtDepth) {
+          const field = this.findField(dtNode, fieldKey);
+          if (!field) continue;
+          const constraints =
+            (field['constraints'] as Record<string, unknown> | undefined) ??
+            undefined;
+          const targetType =
+            (constraints?.['ref'] as string | undefined) || undefined;
+          if (!targetType) continue;
+          const outKey = `${fieldKey}Resolved`;
+          const val = node.doc[fieldKey];
+          if (val == null) {
+            node.doc[outKey] = Array.isArray(val) ? [] : null;
+            continue;
           }
-        } else {
-          const hex = this.asHexId(val);
-          if (hex) entry.ids.add(hex);
+          const bucket = plan.get(targetType) ?? new Set<string>();
+          plan.set(targetType, bucket);
+          if (Array.isArray(val)) {
+            const ids: string[] = [];
+            for (const v of val) {
+              const hex = this.asHexId(v);
+              if (hex) ids.push(hex);
+            }
+            if (ids.length > FANOUT_LIMIT) {
+              if (!warnedFanout) {
+                this.logger.warn(
+                  `enrich fanout exceeded ${FANOUT_LIMIT}; truncating`,
+                );
+                warnedFanout = true;
+              }
+              setTruncated(node.doc);
+            }
+            const slice = ids.slice(0, FANOUT_LIMIT);
+            for (const id of slice) {
+              if (!isVisited(targetType, id)) {
+                bucket.add(id);
+                nodeCount++;
+              }
+            }
+          } else {
+            const hex = this.asHexId(val);
+            if (hex && !isVisited(targetType, hex)) {
+              bucket.add(hex);
+              nodeCount++;
+            }
+          }
         }
       }
-    }
 
-    // Resolve per target type
-    this.cache = new Map<string, Map<string, Record<string, unknown>>>();
-    for (const [target, { ids }] of plan.entries()) {
-      await this.resolveBatch(target, Array.from(ids));
-    }
+      if (nodeCount > NODE_LIMIT) {
+        if (!warnedNodeLimit) {
+          this.logger.warn(
+            `enrich node limit exceeded ${NODE_LIMIT}; truncating further expansion`,
+          );
+          warnedNodeLimit = true;
+        }
+        // Clear plan to stop further fetches
+        plan.clear();
+        // mark current nodes as truncated
+        for (const n of current) setTruncated(n.doc);
+      }
 
-    // Attach into documents
-    for (const [target, { fields }] of plan.entries()) {
-      const pick = select[target];
-      for (const doc of items) {
-        for (const fieldKey of fields) {
-          const val = doc[fieldKey];
+      // Fetch
+      for (const [target, ids] of plan.entries()) {
+        const toFetch = Array.from(ids).filter((id) => !isVisited(target, id));
+        await this.resolveBatch(target, toFetch);
+        for (const id of toFetch) markVisited(target, id);
+      }
+
+      // Attach and collect next depth nodes
+      const nextNodes: Node[] = [];
+      for (const node of current) {
+        const dtNode = await getDt(node.typeKey);
+        for (const fieldKey of fieldsAtDepth) {
+          const field = this.findField(dtNode, fieldKey);
+          if (!field) continue;
+          const constraints =
+            (field['constraints'] as Record<string, unknown> | undefined) ??
+            undefined;
+          const targetType =
+            (constraints?.['ref'] as string | undefined) || undefined;
+          if (!targetType) continue;
+          const pick = select[targetType];
           const outKey = `${fieldKey}Resolved`;
+          const val = node.doc[fieldKey];
           if (val == null) {
-            doc[outKey] = Array.isArray(val) ? [] : null;
+            node.doc[outKey] = Array.isArray(val) ? [] : null;
             continue;
           }
           if (Array.isArray(val)) {
             const resolved = (val as unknown[])
-              .map((v) => this.readFromCache(target, this.asHexId(v)))
+              .map((v) => this.readFromCache(targetType, this.asHexId(v)))
               .filter((x): x is Record<string, unknown> => !!x)
               .map((x) => (pick ? this.pickFields(x, pick) : x));
-            doc[outKey] = resolved;
+            node.doc[outKey] = resolved;
+            for (const child of resolved)
+              nextNodes.push({ typeKey: targetType, doc: child });
           } else {
-            const resolved = this.readFromCache(target, this.asHexId(val));
-            doc[outKey] = resolved
+            const resolved = this.readFromCache(targetType, this.asHexId(val));
+            const out = resolved
               ? pick
                 ? this.pickFields(resolved, pick)
                 : resolved
               : null;
+            node.doc[outKey] = out;
+            if (out) nextNodes.push({ typeKey: targetType, doc: out });
           }
         }
       }
+
+      if (depth === maxDepth) break;
+      current = nextNodes;
+      if (current.length === 0) break;
     }
 
     const next = Array.isArray(ctx.result) ? items : items[0];

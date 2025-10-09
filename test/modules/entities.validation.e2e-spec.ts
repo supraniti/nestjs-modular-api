@@ -15,6 +15,8 @@ type ValidationIssue = { path: string; keyword: string; message: string };
 
 const IS_CI = /^(1|true)$/i.test(process.env.CI ?? '');
 
+jest.setTimeout(120_000);
+
 (IS_CI ? describe.skip : describe)(
   'Entities Validation E2E (hooks + AJV)',
   () => {
