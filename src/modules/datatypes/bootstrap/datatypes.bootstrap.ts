@@ -18,6 +18,7 @@ import {
 import { loadDatatypeSeedsFromDir, mergeDatatypeSeeds } from '../seed-sources';
 import { HookStore } from '../../hooks/hook.store';
 import type { HookActionId, HookPhase, HookStep } from '../../hooks/types';
+import { HOOK_PHASES } from '../../hooks/types';
 
 interface SeedSyncStats {
   inserted: number;
@@ -257,40 +258,119 @@ export class DatatypesBootstrap implements OnModuleInit {
   }
 
   private registerHooks(seeds: ReadonlyArray<DatatypeSeed>): void {
-    let typesWithHooks = 0;
-    let totalSteps = 0;
+    // Reset store for idempotent rebuild
+    this.hooks.reset?.();
 
+    let ownTypes = 0;
+    let ownSteps = 0;
+    let contribSteps = 0;
+    const debugLines: string[] = [];
+
+    // First pass: own hooks per type
     for (const seed of seeds) {
-      const phases = seed.hooks;
+      const phases = seed.hooks as
+        | Readonly<
+            Partial<
+              Record<
+                HookPhase,
+                ReadonlyArray<{
+                  action: string;
+                  args?: Record<string, unknown>;
+                }>
+              >
+            >
+          >
+        | undefined;
       if (!phases) continue;
-      // Count steps and ensure at least one exists
       let seedSteps = 0;
       for (const steps of Object.values(phases)) {
         seedSteps += Array.isArray(steps) ? steps.length : 0;
       }
       if (seedSteps === 0) continue;
 
-      // Cast phases into HookStore shape without importing types into datatypes internals
       const mutablePhases: Partial<Record<HookPhase, HookStep[]>> = {};
-      for (const [phase, steps] of Object.entries(phases)) {
-        const key = phase as HookPhase;
+      for (const phase of HOOK_PHASES) {
+        const steps = phases[phase] as
+          | ReadonlyArray<{ action: string; args?: Record<string, unknown> }>
+          | undefined;
         if (!Array.isArray(steps)) continue;
-        // Create a mutable copy to satisfy HookStore type
-        mutablePhases[key] = steps.map((s) => {
-          const step = s as { action: unknown; args?: Record<string, unknown> };
-          const action = step.action as HookActionId;
-          const args = step.args ? { ...step.args } : undefined;
-          return { action, ...(args ? { args } : {}) } as HookStep;
-        });
+        mutablePhases[phase] = steps.map(
+          (s: { action: string; args?: Record<string, unknown> }) => {
+            const action = s.action as unknown as HookActionId;
+            const args = s.args ? { ...s.args } : undefined;
+            return { action, ...(args ? { args } : {}) } as HookStep;
+          },
+        );
       }
       this.hooks.applyPatch({ typeKey: seed.key, phases: mutablePhases });
-      totalSteps += seedSteps;
-      typesWithHooks += 1;
+      ownSteps += seedSteps;
+      ownTypes += 1;
     }
 
+    // Second pass: contributions
+    for (const seed of seeds) {
+      type ContribHooks = Partial<
+        Record<
+          HookPhase,
+          ReadonlyArray<{ action: string; args?: Record<string, unknown> }>
+        >
+      >;
+      const contribs = (
+        seed as unknown as {
+          contributes?: ReadonlyArray<{ target: string; hooks: ContribHooks }>;
+        }
+      ).contributes as
+        | ReadonlyArray<{ target: string; hooks: ContribHooks }>
+        | undefined;
+      if (!Array.isArray(contribs) || contribs.length === 0) continue;
+      const contribList = contribs as ReadonlyArray<{
+        target: string;
+        hooks: ContribHooks;
+      }>;
+      for (const contrib of contribList) {
+        const mutablePhases: Partial<Record<HookPhase, HookStep[]>> = {};
+        let stepsCount = 0;
+        for (const phase of HOOK_PHASES) {
+          const steps = contrib.hooks[phase] as
+            | ReadonlyArray<{ action: string; args?: Record<string, unknown> }>
+            | undefined;
+          if (!Array.isArray(steps)) continue;
+          const mapped = steps.map(
+            (s: { action: string; args?: Record<string, unknown> }) => {
+              const action = s.action as unknown as HookActionId;
+              const args = s.args ? { ...s.args } : undefined;
+              return { action, ...(args ? { args } : {}) } as HookStep;
+            },
+          );
+          stepsCount += mapped.length;
+          mutablePhases[phase] = mapped;
+        }
+        if (stepsCount > 0) {
+          this.hooks.applyPatch({
+            typeKey: contrib.target,
+            phases: mutablePhases,
+          });
+          contribSteps += stepsCount;
+          // Add a compact debug line per contribution per phase
+          for (const phase of HOOK_PHASES) {
+            const arr = mutablePhases[phase];
+            if (arr && arr.length > 0) {
+              debugLines.push(
+                `Contrib: ${seed.key} -> ${contrib.target}.${phase} (+${arr.length} step${arr.length > 1 ? 's' : ''})`,
+              );
+            }
+          }
+        }
+      }
+    }
+
+    // Emit summary and debug lines
     this.logger.log(
-      `Registered hooks for ${typesWithHooks} types (total ${totalSteps} steps).`,
+      `HookStore: registered hooks for ${ownTypes} types (${ownSteps} own steps, ${contribSteps} contributed steps).`,
     );
+    for (const line of debugLines) {
+      this.logger.debug?.(line);
+    }
   }
 }
 

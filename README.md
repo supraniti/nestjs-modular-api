@@ -309,6 +309,43 @@ Validation (derived from Datatype definition):
 
 During bootstrap, flows are parsed and stored in memory via HookStore. A log entry summarizes: `Registered hooks for <n> types (total <m> steps).`
 
+Contributions (cross-type hooks)
+
+- Seeds can also contribute steps to other types' flows using `contributes[]`.
+- Shape: `contributes: [{ target: string, hooks: { <phase>: HookStep[] } }]`.
+- `target` must be kebab-case and is normalized to lower.
+- Ordering is deterministic:
+  - Seed order: JSON seeds in file order, then FS seeds in lexicographic filename order.
+  - Patches apply in two passes: all own hooks first, then all contributions.
+  - Phases use a fixed order and steps preserve the listed order.
+- Bootstrap resets the in-memory HookStore each run to rebuild flows idempotently; repeated runs yield identical flows with no duplicates.
+
+Example with contributions:
+
+```
+{
+  "key": "taxonomy",
+  "label": "Taxonomy",
+  "status": "published",
+  "version": 1,
+  "storage": { "mode": "single" },
+  "fields": [{ "fieldKey": "name", "required": true, "array": false }],
+  "indexes": [],
+  "hooks": { "beforeCreate": [{ "action": "validate" }] },
+  "contributes": [
+    {
+      "target": "post",
+      "hooks": {
+        "beforeCreate": [{ "action": "validate", "args": { "schema": "taxonomy.rules" } }],
+        "afterGet":    [{ "action": "enrich",   "args": { "with": ["taxonomies"] } }]
+      }
+    }
+  ]
+}
+```
+
+Bootstrap summary log example: `HookStore: registered hooks for 2 types (3 own steps, 2 contributed steps)` and per-contribution debug lines like `Contrib: taxonomy → post.beforeCreate (+1 step)`.
+
 ### Discovery Module (API Explorer Support)
 
 - `GET /api/discovery/manifest` → Returns the Explorer manifest with static

@@ -5,6 +5,11 @@ import type { HookPatch, HookPhase, HookStep } from './types';
 export class HookStore {
   private readonly patchesByType = new Map<string, HookPatch[]>();
 
+  /** Clear all registered flows (used by bootstrap to rebuild deterministically). */
+  reset(): void {
+    this.patchesByType.clear();
+  }
+
   applyPatch(patch: HookPatch): void {
     const list = this.patchesByType.get(patch.typeKey) ?? [];
     list.push(patch);

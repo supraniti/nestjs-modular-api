@@ -23,6 +23,7 @@ export interface DatatypeSeed {
   readonly hooks?: Readonly<
     Partial<Record<HookPhaseLiteral, ReadonlyArray<HookStepLiteral>>>
   >;
+  readonly contributes?: ReadonlyArray<HookContrib>;
   readonly locked: true;
 }
 
@@ -62,6 +63,18 @@ export type HookPhaseLiteral =
 type HookStepLiteral = Readonly<{
   action: string;
   args?: Readonly<Record<string, unknown>>;
+}>;
+
+type HookContribLiteral = Readonly<{
+  target?: unknown;
+  hooks?: unknown;
+}>;
+
+export type HookContrib = Readonly<{
+  target: string; // kebab-case, normalized lower
+  hooks: Readonly<
+    Partial<Record<HookPhaseLiteral, ReadonlyArray<HookStepLiteral>>>
+  >;
 }>;
 
 export const DATATYPE_SEEDS: ReadonlyArray<DatatypeSeed> = Object.freeze(
@@ -111,6 +124,7 @@ function parseSeedLiteral(
   hooks?: Readonly<
     Partial<Record<HookPhaseLiteral, ReadonlyArray<HookStepLiteral>>>
   >;
+  contributes?: ReadonlyArray<HookContrib>;
 } {
   if (!isPlainObject(entry)) {
     throw new Error(`${context}: must be an object.`);
@@ -156,6 +170,7 @@ function parseSeedLiteral(
   const fields = parseFields(literal.fields, keyContext);
   const indexes = parseIndexes(literal.indexes, keyContext);
   const hooks = parseHooks(literal.hooks, keyContext);
+  const contributes = parseContributes(literal.contributes, keyContext);
 
   return {
     key,
@@ -166,6 +181,7 @@ function parseSeedLiteral(
     fields,
     indexes,
     ...(hooks ? { hooks } : {}),
+    ...(contributes ? { contributes } : {}),
   };
 }
 
@@ -369,6 +385,7 @@ function finalizeDatatypeSeed(parsed: {
   hooks?: Readonly<
     Partial<Record<HookPhaseLiteral, ReadonlyArray<HookStepLiteral>>>
   >;
+  contributes?: ReadonlyArray<HookContrib>;
 }): DatatypeSeed {
   const keyLower = normalizeKeyLower(parsed.key);
 
@@ -384,6 +401,9 @@ function finalizeDatatypeSeed(parsed: {
     fields: Object.freeze(parsed.fields.map(cloneField)),
     indexes: Object.freeze(parsed.indexes.map(cloneIndex)),
     ...(parsed.hooks ? { hooks: freezeHooks(parsed.hooks) } : {}),
+    ...(parsed.contributes
+      ? { contributes: freezeContributes(parsed.contributes) }
+      : {}),
     locked: true,
   });
 }
@@ -504,4 +524,49 @@ function freezeHooks(
     );
   }
   return Object.freeze(out);
+}
+
+function parseContributes(
+  value: unknown,
+  context: string,
+): ReadonlyArray<HookContrib> | undefined {
+  if (value === undefined) return undefined;
+  if (!Array.isArray(value)) {
+    throw new Error(`${context}: contributes must be an array when provided.`);
+  }
+  const out: HookContrib[] = [];
+  value.forEach((item, index) => {
+    const contribCtx = `${context} contributes[${index}]`;
+    if (!isPlainObject(item)) {
+      throw new Error(`${contribCtx}: must be an object.`);
+    }
+    const lit = item as HookContribLiteral;
+    const rawTarget = lit.target;
+    if (typeof rawTarget !== 'string' || rawTarget.trim().length === 0) {
+      throw new Error(`${contribCtx}: target must be a non-empty string.`);
+    }
+    const target = rawTarget.trim();
+    if (!isKebabCaseKey(target)) {
+      throw new Error(`${contribCtx}: target must be kebab-case.`);
+    }
+    const hooks = parseHooks(lit.hooks, contribCtx);
+    if (!hooks || Object.keys(hooks).length === 0) {
+      throw new Error(`${contribCtx}: hooks must be a non-empty object.`);
+    }
+    out.push({ target: normalizeKeyLower(target), hooks });
+  });
+  return Object.freeze(out);
+}
+
+function freezeContributes(
+  contribs: ReadonlyArray<HookContrib>,
+): ReadonlyArray<HookContrib> {
+  return Object.freeze(
+    contribs.map((c) =>
+      Object.freeze({
+        target: c.target,
+        hooks: freezeHooks(c.hooks),
+      }),
+    ),
+  );
 }

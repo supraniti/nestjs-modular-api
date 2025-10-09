@@ -12,6 +12,19 @@ export type HookPhase =
   | 'beforeList'
   | 'afterList';
 
+export const HOOK_PHASES: ReadonlyArray<HookPhase> = Object.freeze([
+  'beforeCreate',
+  'afterCreate',
+  'beforeGet',
+  'afterGet',
+  'beforeUpdate',
+  'afterUpdate',
+  'beforeDelete',
+  'afterDelete',
+  'beforeList',
+  'afterList',
+]);
+
 export type HookActionId = string & { __brand: 'HookActionId' };
 
 export interface HookMeta {
