@@ -164,6 +164,26 @@ helpers under `internal/`, and tests under `tests/`.
 
 ---
 
+## Hooks Module (Internal)
+
+- Location: `src/modules/hooks`
+- Purpose: Define, register, and run ordered hook actions for CRUD phases.
+- Phases: `before|after` + `Create/Get/Update/Delete/List`.
+
+Quick start:
+- Register an action
+  - Create a class implementing `{ id, run(ctx) }` and provide it to Nest (or call `HookRegistry.register(action)` directly).
+- Contribute steps
+  - `HookStore.applyPatch({ typeKey, phases: { beforeCreate: [{ action: 'validate' }] } })`.
+- Execute
+  - `HookEngine.run({ typeKey, phase: 'beforeCreate', ctx })`.
+
+Notes
+- Built-ins: `validate`, `enrich` (no-op by default).
+- Deterministic order: patches append; steps run sequentially.
+- Engine injects `ctx.meta.stepArgs` from each step’s `args`.
+- Errors: unknown action → `Unknown action: ...`; action failures are wrapped with `[phase/typeKey/action]`.
+
 ## Entities & Discovery Deep Dive
 
 The Entities and Discovery modules provide runtime CRUD and self-documenting
